@@ -89,13 +89,18 @@ async def test_gateway_intents(raw_token: str, app_id: str) -> bool:
 
 
 def check_token() -> int:
-    raw_token = os.getenv("DISCORD_TOKEN", "").strip()
-    if (raw_token.startswith('"') and raw_token.endswith('"')) or (raw_token.startswith("'") and raw_token.endswith("'")):
-        raw_token = raw_token[1:-1].strip()
+    raw_token = os.getenv("DISCORD_TOKEN", "").strip(" \t\r\n")
+    while len(raw_token) >= 2 and ((raw_token.startswith('"') and raw_token.endswith('"')) or (raw_token.startswith("'") and raw_token.endswith("'"))):
+        raw_token = raw_token[1:-1].strip(" \t\r\n")
 
-    client_id = (os.getenv("CLIENT_ID", "") or os.getenv("DISCORD_CLIENT_ID", "")).strip()
-    if (client_id.startswith('"') and client_id.endswith('"')) or (client_id.startswith("'") and client_id.endswith("'")):
-        client_id = client_id[1:-1].strip()
+    if raw_token.lower().startswith("bot "):
+        raw_token = raw_token[4:].strip(" \t\r\n")
+    elif raw_token.lower().startswith("bearer "):
+        raw_token = raw_token[7:].strip(" \t\r\n")
+
+    client_id = (os.getenv("CLIENT_ID", "") or os.getenv("DISCORD_CLIENT_ID", "")).strip(" \t\r\n")
+    while len(client_id) >= 2 and ((client_id.startswith('"') and client_id.endswith('"')) or (client_id.startswith("'") and client_id.endswith("'"))):
+        client_id = client_id[1:-1].strip(" \t\r\n")
 
     print("=" * 60)
     print(" VoiceBridge Discord Bot - Token Diagnostics")

@@ -61,9 +61,9 @@ class Config:
 def _clean_str(val: Optional[str]) -> str:
     if val is None:
         return ""
-    s = str(val).strip()
-    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
-        s = s[1:-1].strip()
+    s = str(val).strip(" \t\r\n")
+    while len(s) >= 2 and ((s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'"))):
+        s = s[1:-1].strip(" \t\r\n")
     return s
 
 
@@ -107,6 +107,10 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
     source = os.environ if env is None else env
 
     raw_token = _clean_str(source.get("DISCORD_TOKEN"))
+    if raw_token.lower().startswith("bot "):
+        raw_token = raw_token[4:].strip(" \t\r\n")
+    elif raw_token.lower().startswith("bearer "):
+        raw_token = raw_token[7:].strip(" \t\r\n")
     raw_client_id = _clean_str(source.get("DISCORD_CLIENT_ID") or source.get("CLIENT_ID"))
     if not raw_client_id and raw_token:
         raw_client_id = _extract_app_id_from_token(raw_token)
