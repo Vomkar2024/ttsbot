@@ -1,6 +1,6 @@
 """Discord slash commands for TTS."""
 
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import discord
 from discord import app_commands
@@ -51,11 +51,11 @@ def setup_tts_commands(
         description="Choose the text channel that should be read aloud (Manage Server required)",
     )
     @app_commands.describe(
-        channel="The text channel to read aloud (defaults to current channel)"
+        channel="The text or voice channel to read aloud (defaults to current channel)"
     )
     async def setup(
         interaction: discord.Interaction,
-        channel: Optional[discord.TextChannel] = None,
+        channel: Optional[Union[discord.TextChannel, discord.VoiceChannel, discord.StageChannel]] = None,
     ) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
@@ -107,11 +107,12 @@ def setup_tts_commands(
             reused = result.get("reused", False)
             configured_channel_id = settings_store.get_configured_channel(str(interaction.guild.id))
 
-            channel_note = (
-                f"\nReading messages from <#{configured_channel_id}>."
-                if configured_channel_id
-                else "\n⚠️ No text channel configured yet! Run `/setup` to select one."
-            )
+            if configured_channel_id and configured_channel_id != str(voice_channel.id):
+                channel_note = (
+                    f"\nReading messages from <#{voice_channel.id}> (voice chat) and <#{configured_channel_id}>."
+                )
+            else:
+                channel_note = f"\nReading messages from <#{voice_channel.id}>."
 
             if reused:
                 await interaction.followup.send(
@@ -411,9 +412,22 @@ def setup_tts_commands(
             inline=True,
         )
 
+        session_channel_id = getattr(session, "channel_id", None) if session else None
+        if configured_channel_id and session_channel_id:
+            if configured_channel_id == session_channel_id:
+                listening_channels = f"<#{configured_channel_id}> (Voice chat)"
+            else:
+                listening_channels = f"<#{session_channel_id}> (Voice chat) + <#{configured_channel_id}>"
+        elif session_channel_id:
+            listening_channels = f"<#{session_channel_id}> (Voice chat)"
+        elif configured_channel_id:
+            listening_channels = f"<#{configured_channel_id}>"
+        else:
+            listening_channels = "⚠️ *None (Join a voice channel or run `/setup`)*"
+
         embed.add_field(
-            name="Configured Text Channel",
-            value=f"<#{configured_channel_id}>" if configured_channel_id else "⚠️ *None configured (`/setup`)*",
+            name="Listening Channels",
+            value=listening_channels,
             inline=True,
         )
 

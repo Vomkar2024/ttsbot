@@ -67,21 +67,26 @@ async def handle_message_create(
     if not session:
         return False
 
-    # 4. Verify message came from the server's configured TTS text channel
-    if not ss:
-        return False
-
+    # 4. Verify message came from the active voice channel's text chat OR the configured TTS channel
     channel = getattr(message, "channel", None)
     if isinstance(message, dict):
         channel = message.get("channel")
     channel_id = str(channel.get("id") if isinstance(channel, dict) else getattr(channel, "id", ""))
 
-    is_configured = (
-        ss.is_configured_channel(guild_id, channel_id)
-        if hasattr(ss, "is_configured_channel")
-        else ss.isConfiguredChannel(guild_id, channel_id)
+    session_channel_id = str(
+        getattr(session, "channel_id", getattr(session, "channelId", "")) or ""
     )
-    if not is_configured:
+    is_voice_channel_chat = bool(session_channel_id and channel_id == session_channel_id)
+
+    is_configured = False
+    if ss:
+        is_configured = (
+            ss.is_configured_channel(guild_id, channel_id)
+            if hasattr(ss, "is_configured_channel")
+            else ss.isConfiguredChannel(guild_id, channel_id)
+        )
+
+    if not is_voice_channel_chat and not is_configured:
         return False
 
     # 5. Clean, format, and truncate message text
@@ -106,9 +111,13 @@ async def handle_message_create(
         author.get("id") if isinstance(author, dict) else getattr(author, "id", "")
     )
     prefs = (
-        ss.resolve_preferences(guild_id, author_id)
-        if hasattr(ss, "resolve_preferences")
-        else ss.resolvePreferences(guild_id, author_id)
+        (
+            ss.resolve_preferences(guild_id, author_id)
+            if hasattr(ss, "resolve_preferences")
+            else ss.resolvePreferences(guild_id, author_id)
+        )
+        if ss
+        else {"language": "en", "voice": "default"}
     )
     language = prefs.get("language", "en")
     voice = prefs.get("voice", "default")

@@ -1,6 +1,6 @@
 # Discord TTS Bot (Python Edition)
 
-An independent Discord text-to-speech bot written in Python. It reads messages from one configured text channel into the voice channel the bot has joined. Speech is synthesized locally with **eSpeak NG**; per-server defaults and per-user overrides are stored in **SQLite**.
+An independent Discord text-to-speech bot written in Python. It automatically reads messages sent in the active voice channel's built-in text chat, as well as any configured text channel. Speech is synthesized locally with **eSpeak NG**; per-server defaults and per-user overrides are stored in **SQLite**.
 
 ---
 
@@ -8,7 +8,7 @@ An independent Discord text-to-speech bot written in Python. It reads messages f
 
 | Command | Description |
 | :--- | :--- |
-| `/setup` | Choose the one text channel that should be read aloud (*Manage Server permission required*). |
+| `/setup` | Choose a text or voice channel to be read aloud (*Manage Server permission required*). |
 | `/join` | Join the voice channel you are currently in. |
 | `/leave` | Leave voice and discard current and pending speech. |
 | `/voice` | Select an eSpeak voice variant for yourself, or set the server default. |
@@ -17,7 +17,7 @@ An independent Discord text-to-speech bot written in Python. It reads messages f
 | `/skip` | Cancel only the current message; the next waiting item starts. |
 | `/stop` | Cancel current speech and discard all waiting items. |
 | `/clear` | Discard waiting items without interrupting current speech. |
-| `/status` | Show the configured text channel, voice connection, and server default. |
+| `/status` | Show active listening text channels, voice connection, and server defaults. |
 
 ### Preferences & Overrides
 Personal preferences override server defaults **field by field**. For example, a user can keep the server's default voice variant while choosing a personal language.
@@ -25,7 +25,7 @@ Personal preferences override server defaults **field by field**. For example, a
 ### Message Processing Rules
 Messages are only enqueued when **all** of these are true:
 1. They are normal user messages in a server (bot messages, webhooks, and DMs are ignored).
-2. The server has configured the message's channel with `/setup`.
+2. The message is sent directly in the **active voice channel's built-in text chat** OR in a channel configured with `/setup`.
 3. The bot is actively connected to voice in that server.
 
 Empty messages and messages that become empty after sanitization (e.g. standalone URLs or emojis) are ignored. The default behavior prefixes the speaker's display name (`Alice says: ...`); set `SPEAK_USERNAMES=false` in `.env` to turn that off.
