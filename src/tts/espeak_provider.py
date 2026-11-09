@@ -6,6 +6,7 @@ import math
 import shutil
 import struct
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -52,7 +53,18 @@ class EspeakProvider:
     def _resolve_binary_path(self) -> Optional[str]:
         if Path(self.tts_bin).is_file():
             return self.tts_bin
-        return shutil.which(self.tts_bin)
+        found = shutil.which(self.tts_bin)
+        if found:
+            return found
+        if sys.platform == "win32":
+            candidates = [
+                r"C:\Program Files\eSpeak NG\espeak-ng.exe",
+                r"C:\Program Files (x86)\eSpeak NG\espeak-ng.exe",
+            ]
+            for candidate in candidates:
+                if Path(candidate).is_file():
+                    return candidate
+        return None
 
     async def is_available(self) -> bool:
         """Tests if the eSpeak binary is available on the system."""

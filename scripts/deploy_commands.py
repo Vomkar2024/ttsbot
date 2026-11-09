@@ -1,7 +1,13 @@
 """Standalone slash command deployment script for VoiceBridge TTS Bot."""
 
 import asyncio
+from pathlib import Path
 import sys
+
+# Ensure repository root is on sys.path when executed directly
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 import discord
 from discord.ext import commands
