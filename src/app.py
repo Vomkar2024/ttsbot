@@ -1,4 +1,4 @@
-"""VoiceBridge TTS Bot - Main Application."""
+"""Discord TTS Bot - Main Application."""
 
 import asyncio
 import logging
@@ -20,10 +20,10 @@ logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s",
 )
-logger = logging.getLogger("VoiceBridge")
+logger = logging.getLogger("TTSBot")
 
 
-class VoiceBridgeBot(commands.Bot):
+class TTSBot(commands.Bot):
     def __init__(self, app_config: Optional[Config] = None):
         self.cfg = app_config or default_config
 
@@ -84,7 +84,7 @@ class VoiceBridgeBot(commands.Bot):
             try:
                 activity = discord.Activity(
                     type=discord.ActivityType.listening,
-                    name="/status | VoiceBridge",
+                    name="/status | TTS Bot",
                 )
                 await self.change_presence(activity=activity)
             except Exception:
@@ -132,18 +132,18 @@ class VoiceBridgeBot(commands.Bot):
                     await self.session_manager.leave(str(guild.id))
 
     async def stop(self) -> None:
-        logger.info("[VoiceBridge] Shutting down gracefully...")
+        logger.info("[TTS] Shutting down gracefully...")
         try:
             self.session_manager.destroy_all()
             self.settings_store.close()
             await self.close()
-            logger.info("[VoiceBridge] Cleanup complete.")
+            logger.info("[TTS] Cleanup complete.")
         except Exception as err:
-            logger.error("[VoiceBridge] Error during shutdown: %s", err)
+            logger.error("[TTS] Error during shutdown: %s", err)
 
 
-def create_app(app_config: Optional[Config] = None) -> VoiceBridgeBot:
-    return VoiceBridgeBot(app_config=app_config)
+def create_app(app_config: Optional[Config] = None) -> TTSBot:
+    return TTSBot(app_config=app_config)
 
 
 async def main_async() -> None:
@@ -158,6 +158,34 @@ async def main_async() -> None:
     if sys.platform != "win32":
         for s in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(s, lambda s=s: _sig_handler(signal.Signals(s).name))
+
+    # Pre-flight voice dependency check
+    import discord.voice_client
+
+    missing_deps = []
+    if not getattr(discord.voice_client, "has_nacl", False):
+        missing_deps.append("PyNaCl")
+    if not getattr(discord.voice_client, "has_dave", False):
+        missing_deps.append("davey")
+
+    if missing_deps:
+        dep_str = " and ".join(missing_deps)
+        install_cmd = f"{sys.executable} -m pip install {' '.join(missing_deps)}"
+        warn_msg = (
+            "\n" + "=" * 65 + "\n"
+            f" ⚠️ [VOICE DEPENDENCY WARNING] Missing: {dep_str}\n"
+            "=" * 65 + "\n"
+            " Discord voice and end-to-end encryption (DAVE) require these libraries.\n"
+            " Without them, commands like /join will fail when connecting to voice.\n\n"
+            " HOW TO FIX (run in your terminal):\n"
+            f"   {install_cmd}\n"
+            "=" * 65 + "\n"
+        )
+        print(warn_msg, file=sys.stderr, flush=True)
+        logger.warning(
+            "Voice dependencies missing (%s). Voice will be unavailable until installed.",
+            dep_str,
+        )
 
     if not bot.cfg.DISCORD_TOKEN:
         err_msg = (
@@ -205,7 +233,7 @@ async def main_async() -> None:
             "\n" + "=" * 65 + "\n"
             " ❌ [PRIVILEGED INTENTS REQUIRED] Message Content Intent is disabled.\n"
             "=" * 65 + "\n"
-            " VoiceBridge TTS Bot requires 'Message Content Intent' to read messages aloud.\n\n"
+            " Discord TTS Bot requires 'Message Content Intent' to read messages aloud.\n\n"
             " HOW TO FIX:\n"
             f" 1. Go to Discord Developer Portal:\n"
             f"    https://discord.com/developers/applications/{app_id}/bot\n"
@@ -221,7 +249,7 @@ async def main_async() -> None:
     except (asyncio.CancelledError, KeyboardInterrupt):
         pass
     except Exception as err:
-        logger.critical("[VoiceBridge] Unexpected error during bot startup: %s", err, exc_info=True)
+        logger.critical("[TTS] Unexpected error during bot startup: %s", err, exc_info=True)
     finally:
         await bot.stop()
 
@@ -233,5 +261,6 @@ def start_app() -> None:
         pass
 
 
-__all__ = ["VoiceBridgeBot", "create_app", "start_app", "main_async"]
+__all__ = ["TTSBot", "create_app", "start_app", "main_async"]
+
 

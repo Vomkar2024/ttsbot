@@ -1,4 +1,4 @@
-# VoiceBridge TTS Bot (Python Edition)
+# Discord TTS Bot (Python Edition)
 
 An independent Discord text-to-speech bot written in Python. It reads messages from one configured text channel into the voice channel the bot has joined. Speech is synthesized locally with **eSpeak NG**; per-server defaults and per-user overrides are stored in **SQLite**.
 
@@ -36,7 +36,7 @@ Empty messages and messages that become empty after sanitization (e.g. standalon
 
 - **Python 3.10+ (tested with 3.13)**: Asynchronous architecture built on `asyncio`.
 - **discord.py 2.3+**: Maintained Discord API library with application slash-command tree (`app_commands.Group`) and gateway abstractions.
-- **PyNaCl**: Voice protocol encryption for Discord UDP voice connections.
+- **PyNaCl & davey**: Voice protocol audio encryption and Discord DAVE protocol (End-to-End Encryption) for voice connections.
 - **eSpeak NG**: Offline, local, zero-account, zero-cost TTS engine. Text is streamed directly to `stdin` and raw WAV audio is collected from `stdout`.
 - **FFmpeg**: Transcodes local audio stream into Discord-compatible 48kHz stereo Opus frames (`discord.FFmpegPCMAudio`).
 - **Python's built-in `sqlite3`**: Persistent, fast local settings storage without operating an external database server.
@@ -46,7 +46,7 @@ Empty messages and messages that become empty after sanitization (e.g. standalon
 ## Project Structure
 
 ```
-voicebridge-tts-bot/
+tts-bot/
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt
@@ -162,7 +162,7 @@ espeak-ng --version
    DISCORD_CLIENT_ID=your_application_id
    DISCORD_TOKEN=your_bot_token
    TTS_BIN=espeak-ng
-   DATABASE_PATH=./data/voicebridge.sqlite
+   DATABASE_PATH=./data/tts.sqlite
    ```
    *(Optional: set `DISCORD_GUILD_ID=your_test_guild_id` during development so slash commands register instantly in that server).*
 
@@ -200,7 +200,7 @@ The bot will automatically create the SQLite database and `data/` directory.
 | `DISCORD_GUILD_ID` | No | *empty* | Register commands to one development server instead of globally. |
 | `TTS_BIN` | No | `espeak-ng` | eSpeak NG executable name or full binary path. |
 | `FFMPEG_PATH` | No | `ffmpeg` on `PATH` | Explicit FFmpeg executable path. |
-| `DATABASE_PATH` | No | `./data/voicebridge.sqlite` | Local SQLite database file (`:memory:` for tests). |
+| `DATABASE_PATH` | No | `./data/tts.sqlite` | Local SQLite database file (`:memory:` for tests). |
 | `SPEAK_USERNAMES` | No | `true` | Prefix each message with the sender's display name. |
 | `MAX_QUEUE_SIZE` | No | `50` | Maximum waiting messages per server, excluding active item. |
 | `MAX_MESSAGE_CHARS` | No | `800` | Maximum message characters sent to the local TTS engine. |

@@ -1,8 +1,8 @@
-# VoiceBridge TTS Bot — Technical Reference Analysis
+# Discord TTS Bot — Technical Reference Analysis
 
 ## 1. System Architecture
 
-VoiceBridge TTS Bot is an offline, self-contained Discord Text-to-Speech service designed for low-latency, deterministic audio playback without reliance on third-party cloud APIs.
+Discord TTS Bot is an offline, self-contained Discord Text-to-Speech service designed for low-latency, deterministic audio playback without reliance on third-party cloud APIs.
 
 ```
                       +-----------------------------+
@@ -127,8 +127,8 @@ async _serialize(guildId, task) {
 
 ## 5. Storage Engine & Preference Resolution
 
-### 5.1 Native `node:sqlite`
-VoiceBridge uses Node.js 26's built-in `node:sqlite` (`DatabaseSync`), eliminating external database servers or native C++ compilation modules like `better-sqlite3`.
+### 5.1 Native SQLite
+The bot uses built-in SQLite (`sqlite3`), eliminating external database servers or native C++ compilation modules.
 
 ### 5.2 Schema Architecture
 ```sql

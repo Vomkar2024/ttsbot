@@ -155,6 +155,24 @@ class VoiceSessionManager:
                         "MISSING_SPEAK_PERM",
                     )
 
+            # Check voice dependencies prior to connecting
+            try:
+                import discord.voice_client
+                if not getattr(discord.voice_client, "has_nacl", False):
+                    raise VoiceSessionError(
+                        "PyNaCl library needed in order to use voice. Install it via 'pip install PyNaCl' and restart the bot.",
+                        "MISSING_VOICE_DEPENDENCY",
+                    )
+                if not getattr(discord.voice_client, "has_dave", False):
+                    raise VoiceSessionError(
+                        "davey library needed in order to use voice. Install it via 'pip install davey' and restart the bot.",
+                        "MISSING_VOICE_DEPENDENCY",
+                    )
+            except VoiceSessionError:
+                raise
+            except Exception:
+                pass
+
             # Connect to voice channel
             try:
                 voice_client = await voice_channel.connect(

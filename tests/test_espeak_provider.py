@@ -62,7 +62,7 @@ class TestEspeakProvider(unittest.IsolatedAsyncioTestCase):
             self.skipTest("eSpeak NG binary not found on PATH. Skipping live synthesis test.")
             return
 
-        wav = await provider.synthesize("VoiceBridge test.")
+        wav = await provider.synthesize("TTS test.")
         self.assertIsInstance(wav, bytes)
         self.assertGreater(len(wav), 44)
         self.assertEqual(wav[0:4], b"RIFF")

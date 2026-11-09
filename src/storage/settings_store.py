@@ -1,4 +1,4 @@
-"""Persistent SQLite storage for VoiceBridge server and user TTS preferences."""
+"""Persistent SQLite storage for Discord server and user TTS preferences."""
 
 import os
 import sqlite3

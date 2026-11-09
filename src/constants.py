@@ -1,4 +1,4 @@
-"""Constants and static choice lists for VoiceBridge TTS Bot."""
+"""Constants and static choice lists for Discord TTS Bot."""
 
 DEFAULT_LANGUAGE = "en"
 DEFAULT_VOICE = "default"

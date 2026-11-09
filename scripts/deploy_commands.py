@@ -1,4 +1,4 @@
-"""Standalone slash command deployment script for VoiceBridge TTS Bot."""
+"""Standalone slash command deployment script for Discord TTS Bot."""
 
 import asyncio
 from pathlib import Path

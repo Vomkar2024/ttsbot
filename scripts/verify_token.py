@@ -103,7 +103,7 @@ def check_token() -> int:
         client_id = client_id[1:-1].strip(" \t\r\n")
 
     print("=" * 60)
-    print(" VoiceBridge Discord Bot - Token Diagnostics")
+    print(" Discord TTS Bot - Token & Environment Diagnostics")
     print("=" * 60)
 
     if not raw_token:
@@ -136,12 +136,50 @@ def check_token() -> int:
     app_id = token_client_id or client_id or "YOUR_APP_ID"
     bot_portal_url = f"https://discord.com/developers/applications/{app_id}/bot"
 
-    print("\n1. Testing REST API authentication (https://discord.com/api/v10/users/@me)...")
+    # 1. Test Voice & E2EE Encryption Dependencies
+    print("\n1. Testing Discord Voice & End-to-End Encryption (DAVE) dependencies...")
+    voice_errors = []
+
+    try:
+        import nacl.secret  # noqa: F401
+        import nacl.utils  # noqa: F401
+        import nacl
+
+        pynacl_ver = getattr(nacl, "__version__", "installed")
+        print(f"✓ PyNaCl audio encryption: OK (v{pynacl_ver})")
+    except ImportError:
+        voice_errors.append("PyNaCl")
+        print("❌ PyNaCl is missing! Voice connection will fail.")
+
+    try:
+        import davey
+
+        davey_ver = getattr(davey, "__version__", "installed")
+        print(f"✓ davey Discord DAVE voice encryption: OK (v{davey_ver})")
+    except ImportError:
+        voice_errors.append("davey")
+        print("❌ davey is missing! Discord requires davey for voice encryption (E2EE).")
+
+    import discord.opus
+
+    if discord.opus.is_loaded():
+        print("✓ Opus audio codec: loaded")
+    else:
+        print("ℹ Opus audio codec: will load dynamically on voice connection")
+
+    if voice_errors:
+        print("\n❌ [VOICE DEPENDENCIES MISSING]")
+        print("   Discord voice channel connections will fail without these packages.")
+        print("\nHOW TO FIX:")
+        print(f"   {sys.executable} -m pip install {' '.join(voice_errors)}")
+        return 1
+
+    print("\n2. Testing REST API authentication (https://discord.com/api/v10/users/@me)...")
     req = urllib.request.Request(
         "https://discord.com/api/v10/users/@me",
         headers={
             "Authorization": f"Bot {raw_token}",
-            "User-Agent": "VoiceBridgeTTSBot (https://github.com/Vomkar2024/ttsbot, 1.0)",
+            "User-Agent": "DiscordTTSBot (https://github.com/Vomkar2024/ttsbot, 1.0)",
         },
     )
 
@@ -177,13 +215,13 @@ def check_token() -> int:
         print("   Please check your internet connection or firewall/proxy settings.")
         return 1
 
-    # 2. Test Gateway Intents
+    # 3. Test Gateway Intents
     gateway_ok = asyncio.run(test_gateway_intents(raw_token, app_id))
     if not gateway_ok:
         return 1
 
     print("\n" + "=" * 60)
-    print(" ✅ All Checks Passed! Your bot token & intents are 100% ready.")
+    print(" ✅ All Checks Passed! Your bot token, gateway intents, & voice encryption are ready.")
     print(" You can now run the bot with: python main.py")
     print("=" * 60)
     return 0

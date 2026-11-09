@@ -1,4 +1,4 @@
-"""Configuration loader for VoiceBridge TTS Bot."""
+"""Configuration loader for Discord TTS Bot."""
 
 import base64
 import os
@@ -26,7 +26,7 @@ class Config:
         discord_guild_id: str = "",
         tts_bin: str = "espeak-ng",
         ffmpeg_path: str = "ffmpeg",
-        database_path: str = "./data/voicebridge.sqlite",
+        database_path: str = "./data/tts.sqlite",
         speak_usernames: bool = True,
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
         max_message_chars: int = DEFAULT_MAX_MESSAGE_CHARS,
@@ -120,7 +120,7 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
     raw_tts_bin = _clean_str(source.get("TTS_BIN")) or "espeak-ng"
     raw_ffmpeg_path = _clean_str(source.get("FFMPEG_PATH")) or "ffmpeg"
 
-    raw_db_path = _clean_str(source.get("DATABASE_PATH")) or "./data/voicebridge.sqlite"
+    raw_db_path = _clean_str(source.get("DATABASE_PATH")) or "./data/tts.sqlite"
     if raw_db_path == ":memory:":
         db_path = ":memory:"
     else:

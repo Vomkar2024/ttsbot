@@ -89,6 +89,25 @@ class TestSessionManager(unittest.IsolatedAsyncioTestCase):
             await manager.join(fake_guild1, fake_channel_no_speak)
         self.assertEqual(cm2.exception.code, "MISSING_SPEAK_PERM")
 
+    async def test_throws_when_voice_dependencies_missing(self):
+        manager = VoiceSessionManager()
+        fake_guild = SimpleNamespace(id="g_voice", me=SimpleNamespace(id="bot_1"))
+        fake_channel = SimpleNamespace(
+            id="vc_voice",
+            permissions_for=lambda me: SimpleNamespace(connect=True, speak=True),
+        )
+
+        import discord.voice_client
+        orig_has_dave = getattr(discord.voice_client, "has_dave", True)
+        try:
+            discord.voice_client.has_dave = False
+            with self.assertRaises(VoiceSessionError) as cm:
+                await manager.join(fake_guild, fake_channel)
+            self.assertEqual(cm.exception.code, "MISSING_VOICE_DEPENDENCY")
+            self.assertIn("davey library needed", str(cm.exception))
+        finally:
+            discord.voice_client.has_dave = orig_has_dave
+
     async def test_reuses_healthy_session_on_same_channel(self):
         manager = VoiceSessionManager()
         fake_session = SimpleNamespace(

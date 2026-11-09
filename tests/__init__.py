@@ -1,2 +1,2 @@
-"""VoiceBridge Test Suite."""
+"""TTS Bot Test Suite."""
 

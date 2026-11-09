@@ -1,4 +1,4 @@
-"""Discord slash commands for VoiceBridge TTS."""
+"""Discord slash commands for TTS."""
 
 from typing import List, Optional
 
@@ -44,7 +44,7 @@ def setup_tts_commands(
     session_manager: VoiceSessionManager,
     settings_store: SettingsStore,
 ) -> List[app_commands.Command]:
-    """Registers all VoiceBridge slash commands as top-level application commands."""
+    """Registers all TTS slash commands as top-level application commands."""
 
     @tree.command(
         name=COMMAND_SETUP,
@@ -257,7 +257,7 @@ def setup_tts_commands(
 
         status = session.serial_queue.get_status()
         embed = discord.Embed(
-            title="🔊 VoiceBridge Queue",
+            title="🔊 TTS Queue",
             color=0x5865F2,
         )
 
@@ -401,7 +401,7 @@ def setup_tts_commands(
         effective = settings_store.resolve_preferences(guild_id, user_id)
 
         embed = discord.Embed(
-            title="🎙️ VoiceBridge TTS Status",
+            title="🎙️ TTS Status",
             color=0x57F287 if session else 0xED4245,
         )
 

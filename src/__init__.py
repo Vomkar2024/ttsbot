@@ -1,2 +1,2 @@
-"""VoiceBridge TTS Bot - Python Edition."""
+"""Discord TTS Bot - Python Edition."""
 
