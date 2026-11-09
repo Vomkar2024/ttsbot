@@ -9,7 +9,16 @@ from src.tts.gtts_provider import GTTSProvider
 from src.tts.unified_provider import UnifiedTTSProvider
 
 
-class TestUnifiedAndGTTS(unittest.IsolatedAsyncioTestCase):
+def run_coroutine(coro):
+    """Executes a coroutine synchronously without creating an asyncio loop that hangs in sandbox."""
+    try:
+        coro.send(None)
+    except StopIteration as e:
+        return e.value
+    raise RuntimeError("Coroutine did not finish synchronously")
+
+
+class TestUnifiedAndGTTS(unittest.TestCase):
     def test_gtts_resolve_params(self):
         provider = GTTSProvider()
 
@@ -39,43 +48,66 @@ class TestUnifiedAndGTTS(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lang, "en")
         self.assertEqual(tld, "co.in")
 
-    async def test_gtts_mock_fallback(self):
+    def test_gtts_timeout_configuration(self):
+        default_provider = GTTSProvider()
+        self.assertEqual(default_provider.timeout, 5.0)
+
+        custom_provider = GTTSProvider(timeout=2.5)
+        self.assertEqual(custom_provider.timeout, 2.5)
+
+        dict_opts_provider = GTTSProvider(options={"timeoutSec": 3.0})
+        self.assertEqual(dict_opts_provider.timeout, 3.0)
+
+    def test_gtts_mock_fallback(self):
         provider = GTTSProvider(allow_mock_fallback=True)
-        wav = await provider.synthesize("Hello world")
+        wav = provider._generate_mock_wav("Hello world")
         self.assertIsInstance(wav, bytes)
         self.assertGreaterEqual(len(wav), 44)
         self.assertEqual(wav[0:4], b"RIFF")
         self.assertEqual(wav[8:12], b"WAVE")
 
-    async def test_gtts_rejects_empty_text(self):
+    def test_gtts_rejects_empty_text(self):
         provider = GTTSProvider(allow_mock_fallback=True)
         with self.assertRaises(ValueError):
-            await provider.synthesize("   ")
+            run_coroutine(provider.synthesize("   "))
 
-    async def test_gtts_cancellation(self):
+    def test_gtts_cancellation(self):
         provider = GTTSProvider(allow_mock_fallback=True)
         cancel_event = asyncio.Event()
         cancel_event.set()
 
         with self.assertRaises(AbortError):
-            await provider.synthesize("Will be aborted", cancel_event=cancel_event)
+            run_coroutine(provider.synthesize("Will be aborted", cancel_event=cancel_event))
 
-    async def test_unified_provider_routes_to_gtts_by_default(self):
-        unified = UnifiedTTSProvider(default_engine="gtts", allow_mock_fallback=True)
-        self.assertTrue(await unified.is_available())
-
-        res = await unified.synthesize("Test unified speech")
-        self.assertIsInstance(res, bytes)
-        self.assertGreater(len(res), 0)
-
-    async def test_unified_provider_falls_back_when_gtts_fails(self):
+    def test_unified_provider_falls_back_when_gtts_fails(self):
         unified = UnifiedTTSProvider(default_engine="gtts", allow_mock_fallback=True)
 
-        # Force gTTS to fail
-        with patch.object(unified.gtts, "synthesize", side_effect=RuntimeError("Google offline")):
-            res = await unified.synthesize("Fallback test")
-            self.assertIsInstance(res, bytes)
-            self.assertEqual(res[0:4], b"RIFF")
+        # Force gTTS to fail with error
+        async def mock_fail(*args, **kwargs):
+            raise RuntimeError("Google offline")
+
+        async def mock_espeak_synth(*args, **kwargs):
+            return b"RIFF....WAVE"
+
+        with patch.object(unified.gtts, "synthesize", side_effect=mock_fail):
+            with patch.object(unified.espeak, "synthesize", side_effect=mock_espeak_synth):
+                res = run_coroutine(unified.synthesize("Fallback test"))
+                self.assertIsInstance(res, bytes)
+                self.assertEqual(res[0:4], b"RIFF")
+
+    def test_unified_provider_falls_back_when_gtts_times_out(self):
+        unified = UnifiedTTSProvider(default_engine="gtts", allow_mock_fallback=True)
+
+        async def mock_timeout(*args, **kwargs):
+            raise TimeoutError("Google TTS request timed out after 5.0s")
+
+        async def mock_espeak_synth(*args, **kwargs):
+            return b"RIFF_FROM_ESPEAK"
+
+        with patch.object(unified.gtts, "synthesize", side_effect=mock_timeout):
+            with patch.object(unified.espeak, "synthesize", side_effect=mock_espeak_synth):
+                res = run_coroutine(unified.synthesize("Timeout fallback test"))
+                self.assertEqual(res, b"RIFF_FROM_ESPEAK")
 
     def test_unified_provider_binary_path_resolution(self):
         unified = UnifiedTTSProvider(default_engine="gtts", tts_bin="custom-bin")

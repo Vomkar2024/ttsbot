@@ -43,10 +43,12 @@ class DiscordVoiceSession:
         self.disconnect_grace_sec = self.disconnect_grace_ms / 1000.0
         self.ffmpeg_path = opts.get("ffmpegPath", opts.get("ffmpeg_path", ffmpeg_path))
 
+        vc_loop = getattr(voice_client, "loop", None)
         self.serial_queue = SerialQueue(
             guild_id=self.guild_id,
             max_size=self.max_queue_size,
             on_process_job=self._process_job,
+            loop=vc_loop,
         )
 
         self.is_destroyed = False

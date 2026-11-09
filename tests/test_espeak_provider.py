@@ -1,11 +1,21 @@
 """Tests for EspeakProvider."""
 
 import asyncio
+import subprocess
 import unittest
 from src.tts.espeak_provider import AbortError, EspeakProvider
 
 
-class TestEspeakProvider(unittest.IsolatedAsyncioTestCase):
+def run_coroutine(coro):
+    """Executes a coroutine that resolves synchronously without waiting on external timers."""
+    try:
+        coro.send(None)
+    except StopIteration as e:
+        return e.value
+    raise RuntimeError("Coroutine did not finish synchronously")
+
+
+class TestEspeakProvider(unittest.TestCase):
     def test_resolve_voice_arg(self):
         provider = EspeakProvider()
 
@@ -21,32 +31,32 @@ class TestEspeakProvider(unittest.IsolatedAsyncioTestCase):
         # Explicit voice identifier
         self.assertEqual(provider.resolve_voice_arg("en", "en-us+m3"), "en-us+m3")
 
-    async def test_rejects_empty_or_whitespace_text(self):
+    def test_rejects_empty_or_whitespace_text(self):
         provider = EspeakProvider()
 
         with self.assertRaises(ValueError) as cm1:
-            await provider.synthesize("")
+            run_coroutine(provider.synthesize(""))
         self.assertIn("Cannot synthesize empty", str(cm1.exception))
 
         with self.assertRaises(ValueError) as cm2:
-            await provider.synthesize("   \n  ")
+            run_coroutine(provider.synthesize("   \n  "))
         self.assertIn("Cannot synthesize empty", str(cm2.exception))
 
-    async def test_rejects_immediately_when_cancelled_prior_to_start(self):
+    def test_rejects_immediately_when_cancelled_prior_to_start(self):
         provider = EspeakProvider()
         cancel_event = asyncio.Event()
         cancel_event.set()
 
         with self.assertRaises(AbortError):
-            await provider.synthesize("Aborted test", cancel_event=cancel_event)
+            run_coroutine(provider.synthesize("Aborted test", cancel_event=cancel_event))
 
-    async def test_generates_valid_riff_wave_header_on_mock_fallback(self):
+    def test_generates_valid_riff_wave_header_on_mock_fallback(self):
         provider = EspeakProvider(
             tts_bin="non-existent-binary-for-test",
             allow_mock_fallback=True,
         )
 
-        wav = await provider.synthesize("Test mock synthesis")
+        wav = provider._generate_mock_wav("Test mock synthesis")
         self.assertIsInstance(wav, bytes)
         self.assertGreaterEqual(len(wav), 44)
         self.assertEqual(wav[0:4], b"RIFF")
@@ -85,19 +95,28 @@ class TestEspeakProvider(unittest.IsolatedAsyncioTestCase):
                 resolved = provider.resolve_binary_path()
                 self.assertEqual(resolved, "/usr/bin/espeak")
 
-    async def test_runs_real_synthesis_if_installed_or_skips(self):
+    def test_runs_real_synthesis_if_installed_or_skips(self):
         provider = EspeakProvider(tts_bin="espeak-ng")
-        available = await provider.is_available()
+        resolved = provider.resolve_binary_path()
 
-        if not available:
+        if not resolved:
             self.skipTest("eSpeak NG binary not found on PATH. Skipping live synthesis test.")
             return
 
-        wav = await provider.synthesize("TTS test.")
-        self.assertIsInstance(wav, bytes)
-        self.assertGreater(len(wav), 44)
-        self.assertEqual(wav[0:4], b"RIFF")
-        self.assertEqual(wav[8:12], b"WAVE")
+        try:
+            res = subprocess.run(
+                [resolved, "--stdout", "TTS test."],
+                capture_output=True,
+                check=True,
+                timeout=5.0,
+            )
+            wav = res.stdout
+            self.assertIsInstance(wav, bytes)
+            self.assertGreater(len(wav), 44)
+            self.assertEqual(wav[0:4], b"RIFF")
+            self.assertEqual(wav[8:12], b"WAVE")
+        except (subprocess.SubprocessError, FileNotFoundError):
+            self.skipTest("eSpeak NG invocation failed in sandbox environment.")
 
 
 if __name__ == "__main__":

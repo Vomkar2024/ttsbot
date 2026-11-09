@@ -38,6 +38,8 @@ class Config:
         voice_disconnect_grace_ms: int = DEFAULT_VOICE_DISCONNECT_GRACE_MS,
         default_language: str = DEFAULT_LANGUAGE,
         default_voice: str = DEFAULT_VOICE,
+        announce_links: bool = True,
+        gtts_timeout_sec: float = 5.0,
     ):
         self.DISCORD_TOKEN = discord_token
         self.DISCORD_CLIENT_ID = discord_client_id
@@ -54,6 +56,8 @@ class Config:
         self.VOICE_DISCONNECT_GRACE_MS = voice_disconnect_grace_ms
         self.DEFAULT_LANGUAGE = default_language
         self.DEFAULT_VOICE = default_voice
+        self.ANNOUNCE_LINKS = announce_links
+        self.GTTS_TIMEOUT_SEC = gtts_timeout_sec
 
     @property
     def voice_ready_timeout_sec(self) -> float:
@@ -109,6 +113,17 @@ def _parse_num(val: Optional[str], default_val: int) -> int:
         return default_val
 
 
+def _parse_float(val: Optional[str], default_val: float) -> float:
+    cleaned = _clean_str(val)
+    if not cleaned:
+        return default_val
+    try:
+        num = float(cleaned)
+        return num if num > 0 else default_val
+    except ValueError:
+        return default_val
+
+
 def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
     source = os.environ if env is None else env
 
@@ -139,6 +154,8 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
     max_message_chars = _parse_num(source.get("MAX_MESSAGE_CHARS"), DEFAULT_MAX_MESSAGE_CHARS)
     voice_ready_timeout_ms = _parse_num(source.get("VOICE_READY_TIMEOUT_MS"), DEFAULT_VOICE_READY_TIMEOUT_MS)
     voice_disconnect_grace_ms = _parse_num(source.get("VOICE_DISCONNECT_GRACE_MS"), DEFAULT_VOICE_DISCONNECT_GRACE_MS)
+    announce_links = _parse_bool(source.get("ANNOUNCE_LINKS"), True)
+    gtts_timeout_sec = _parse_float(source.get("GTTS_TIMEOUT_SEC"), 5.0)
 
     return Config(
         discord_token=raw_token,
@@ -156,6 +173,8 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
         voice_disconnect_grace_ms=voice_disconnect_grace_ms,
         default_language=DEFAULT_LANGUAGE,
         default_voice=DEFAULT_VOICE,
+        announce_links=announce_links,
+        gtts_timeout_sec=gtts_timeout_sec,
     )
 
 

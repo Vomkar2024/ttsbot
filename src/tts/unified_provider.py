@@ -27,7 +27,10 @@ class UnifiedTTSProvider:
             "allowMockFallback", opts.get("allow_mock_fallback", allow_mock_fallback)
         )
 
-        self.gtts = GTTSProvider(allow_mock_fallback=self.allow_mock_fallback)
+        self.gtts = GTTSProvider(
+            allow_mock_fallback=self.allow_mock_fallback,
+            timeout=float(opts.get("gtts_timeout_sec", opts.get("timeout", 5.0))),
+        )
         self.espeak = EspeakProvider(
             tts_bin=tts_bin,
             allow_mock_fallback=self.allow_mock_fallback,

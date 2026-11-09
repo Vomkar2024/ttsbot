@@ -122,6 +122,8 @@ class TestMessageHandler(unittest.TestCase):
                 enqueued = True
 
         mock_session = SimpleNamespace(serial_queue=MockQueue(), channel_id="voice_chan")
+        
+        # Test 1: Content with only mentions that strips to completely empty text
         context = {
             "sessionManager": MockSessionManager(session=mock_session),
             "settingsStore": MockSettingsStore(configured_channel="tts_chan"),
@@ -132,10 +134,25 @@ class TestMessageHandler(unittest.TestCase):
             "author": {"bot": False},
             "guild": {"id": "g1"},
             "channel": {"id": "tts_chan"},
-            "content": "https://discord.com/invite/something <#12345>",
+            "content": "<#12345> <@!98765>",
         }
 
         self.assertFalse(run_coroutine(handle_message_create(msg, context)))
+        self.assertFalse(enqueued)
+
+        # Test 2: Content with link when ANNOUNCE_LINKS is disabled
+        context_no_links = {
+            "sessionManager": MockSessionManager(session=mock_session),
+            "settingsStore": MockSettingsStore(configured_channel="tts_chan"),
+            "config": {**self.dummy_config, "ANNOUNCE_LINKS": False},
+        }
+        msg_link = {
+            "author": {"bot": False},
+            "guild": {"id": "g1"},
+            "channel": {"id": "tts_chan"},
+            "content": "https://discord.com/invite/something",
+        }
+        self.assertFalse(run_coroutine(handle_message_create(msg_link, context_no_links)))
         self.assertFalse(enqueued)
 
     def test_enqueues_valid_message_with_speaker_attribution(self):

@@ -76,11 +76,13 @@ class SerialQueue:
         max_size: int = DEFAULT_MAX_QUEUE_SIZE,
         on_process_job: Optional[Callable[[QueueJob, asyncio.Event], Any]] = None,
         options: Optional[Dict[str, Any]] = None,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
         opts = options or {}
         self.guild_id = guild_id
         self.max_size = opts.get("maxSize", opts.get("max_size", max_size))
         self.on_process_job = opts.get("onProcessJob", opts.get("on_process_job", on_process_job))
+        self.loop = loop or opts.get("loop")
 
         self.pending_queue: List[QueueJob] = []
         self.current_job: Optional[QueueJob] = None
@@ -88,6 +90,31 @@ class SerialQueue:
         self.is_processing = False
         self.job_sequence = 0
         self._process_task: Optional[asyncio.Task] = None
+
+    def _resolve_loop(self) -> asyncio.AbstractEventLoop:
+        """Resolves an active event loop for job futures and task scheduling."""
+        if self.loop is not None and not self.loop.is_closed():
+            return self.loop
+
+        try:
+            running = asyncio.get_running_loop()
+            self.loop = running
+            return running
+        except RuntimeError:
+            pass
+
+        try:
+            policy_loop = asyncio.get_event_loop_policy().get_event_loop()
+            if policy_loop is not None and not policy_loop.is_closed():
+                self.loop = policy_loop
+                return policy_loop
+        except RuntimeError:
+            pass
+
+        raise RuntimeError(
+            f"SerialQueue for guild {self.guild_id} could not resolve an active event loop. "
+            "Pass an explicit loop to SerialQueue(..., loop=...) when enqueuing from a worker thread."
+        )
 
     def set_processor(self, handler: Callable[[QueueJob, asyncio.Event], Any]) -> None:
         self.on_process_job = handler
@@ -99,10 +126,7 @@ class SerialQueue:
         if len(self.pending_queue) >= self.max_size:
             raise QueueFullError(f"Queue full: maximum {self.max_size} pending messages reached.")
 
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
+        loop = self._resolve_loop()
 
         self.job_sequence += 1
         job_id = self.job_sequence
@@ -111,7 +135,7 @@ class SerialQueue:
         self.pending_queue.append(job)
         position = len(self.pending_queue)
 
-        self._ensure_processing()
+        self._ensure_processing(loop)
 
         return {
             "job_id": job_id,
@@ -210,13 +234,32 @@ class SerialQueue:
 
     getStatus = get_status
 
-    def _ensure_processing(self) -> None:
-        if not self.is_processing:
-            try:
-                loop = asyncio.get_running_loop()
-                self._process_task = loop.create_task(self._process_loop())
-            except RuntimeError:
-                pass
+    def _ensure_processing(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+        if self.is_processing:
+            return
+
+        try:
+            target_loop = loop or self._resolve_loop()
+        except RuntimeError as err:
+            logger.warning("[SerialQueue Guild %s] _ensure_processing loop lookup: %s", self.guild_id, err)
+            return
+
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if current_loop is target_loop and target_loop.is_running():
+            if not self._process_task or self._process_task.done():
+                self._process_task = target_loop.create_task(self._process_loop())
+        else:
+            # Called from a worker thread or outside active running loop: schedule thread-safely
+            if target_loop.is_running():
+                target_loop.call_soon_threadsafe(self._schedule_process_task, target_loop)
+
+    def _schedule_process_task(self, target_loop: asyncio.AbstractEventLoop) -> None:
+        if not self.is_processing and (not self._process_task or self._process_task.done()):
+            self._process_task = target_loop.create_task(self._process_loop())
 
     async def _process_loop(self) -> None:
         if self.is_processing:

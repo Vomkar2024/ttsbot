@@ -126,12 +126,12 @@ async def handle_message_create(
     # 5. Clean, format, and truncate message text
     speak_usernames = getattr(cfg, "SPEAK_USERNAMES", True) if cfg else True
     max_chars = getattr(cfg, "MAX_MESSAGE_CHARS", 800) if cfg else 800
-    announce_links = getattr(cfg, "ANNOUNCE_LINKS", False) if cfg else False
+    announce_links = getattr(cfg, "ANNOUNCE_LINKS", True) if cfg else True
 
     if isinstance(cfg, dict):
         speak_usernames = cfg.get("SPEAK_USERNAMES", True)
         max_chars = cfg.get("MAX_MESSAGE_CHARS", 800)
-        announce_links = cfg.get("ANNOUNCE_LINKS", False)
+        announce_links = cfg.get("ANNOUNCE_LINKS", True)
 
     formatted = format_message_for_tts(
         message,

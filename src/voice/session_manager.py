@@ -98,13 +98,6 @@ class VoiceSessionManager:
                     if is_conn and not getattr(existing, "is_destroyed", False):
                         return {"session": existing, "reused": True}
 
-                # Channel move or stale connection: destroy old session
-                if hasattr(existing, "destroy_async"):
-                    await existing.destroy_async()
-                elif hasattr(existing, "destroy"):
-                    existing.destroy()
-                self.sessions.pop(guild_id, None)
-
             # Check bot permissions in target voice channel
             me = getattr(guild, "me", None)
             if not me and hasattr(guild, "members"):
@@ -175,30 +168,60 @@ class VoiceSessionManager:
             except Exception:
                 pass
 
-            # Connect to voice channel or move existing connection
-            existing_vc = getattr(guild, "voice_client", None)
+            # Determine whether we can seamlessly move an active voice connection
+            existing_vc = getattr(existing, "voice_client", None) if existing else getattr(guild, "voice_client", None)
             is_vc_conn = False
             if existing_vc is not None:
                 if hasattr(existing_vc, "is_connected"):
                     is_vc_conn = existing_vc.is_connected() if callable(existing_vc.is_connected) else bool(existing_vc.is_connected)
+                elif hasattr(existing_vc, "state"):
+                    status = getattr(existing_vc.state, "status", "")
+                    is_vc_conn = status != "destroyed"
 
-            if existing_vc and is_vc_conn:
-                # If guild already has an active voice client, seamlessly move it (MoveVC)
-                if str(getattr(getattr(existing_vc, "channel", None), "id", "")) != str(voice_channel.id):
-                    try:
-                        await existing_vc.move_to(voice_channel)
-                    except Exception as err:
-                        raise VoiceSessionError(
-                            f"Failed to move to voice channel {voice_channel.id}: {err}",
-                            "MOVE_FAILED",
-                        ) from err
-                voice_client = existing_vc
-            else:
+            if existing_vc and is_vc_conn and not getattr(existing, "is_destroyed", False):
+                # Seamless channel move via Discord Gateway move_to
                 try:
-                    voice_client = await voice_channel.connect(
+                    if hasattr(existing_vc, "move_to"):
+                        res = existing_vc.move_to(voice_channel)
+                        if asyncio.iscoroutine(res):
+                            await res
+                    if existing:
+                        existing.channel_id = str(voice_channel.id)
+                        if hasattr(existing, "queue") and hasattr(existing.queue, "clear"):
+                            existing.queue.clear()
+                        return {"session": existing, "reused": True, "moved": True}
+                    voice_client = existing_vc
+                except Exception as err:
+                    logger.warning(
+                        "[VoiceSessionManager Guild %s] Seamless move_to failed: %s. Reconnecting.",
+                        guild_id,
+                        err,
+                    )
+                    if hasattr(existing, "destroy_async"):
+                        await existing.destroy_async()
+                    elif hasattr(existing, "destroy"):
+                        existing.destroy()
+                    self.sessions.pop(guild_id, None)
+                    voice_client = None
+            else:
+                if existing:
+                    if hasattr(existing, "destroy_async"):
+                        await existing.destroy_async()
+                    elif hasattr(existing, "destroy"):
+                        existing.destroy()
+                    self.sessions.pop(guild_id, None)
+                voice_client = None
+
+            if voice_client is None:
+                try:
+                    conn_res = voice_channel.connect(
                         timeout=self.ready_timeout_sec,
                         reconnect=True,
                     )
+                    if asyncio.iscoroutine(conn_res):
+                        voice_client = await conn_res
+                    else:
+                        voice_client = conn_res
                 except Exception as err:
                     raise VoiceSessionError(
                         f"Failed to establish voice connection within {self.ready_timeout_ms}ms: {err}",

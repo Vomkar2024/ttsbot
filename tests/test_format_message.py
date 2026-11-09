@@ -31,7 +31,12 @@ class TestFormatMessage(unittest.TestCase):
         self.assertEqual(clean_discord_text("   "), "")
         self.assertEqual(clean_discord_text("https://only-a-link.com"), "")
         self.assertIsNone(format_message_for_tts({"content": "   "}))
-        self.assertIsNone(format_message_for_tts({"content": "https://only-a-link.com"}))
+        # With announce_links=False, standalone URL returns None
+        self.assertIsNone(format_message_for_tts({"content": "https://only-a-link.com"}, announce_links=False))
+        # With default announce_links=True, standalone URL produces link announcement
+        res_link = format_message_for_tts({"content": "https://only-a-link.com", "member": {"displayName": "Alice"}})
+        self.assertIsNotNone(res_link)
+        self.assertEqual(res_link.spoken_text, "Alice sent a link")
 
     def test_prefixes_author_display_name_when_speak_usernames_is_true(self):
         message = {
@@ -120,6 +125,45 @@ class TestFormatMessage(unittest.TestCase):
         self.assertTrue(tracker.should_announce_name("guild1", "user_bob"))
         # Message by Alice again: should announce because Bob spoke
         self.assertTrue(tracker.should_announce_name("guild1", "user_alice"))
+
+    def test_formatted_tts_message_container_protocol(self):
+        msg = format_message_for_tts(
+            {"content": "Hello world", "member": {"displayName": "Alice"}},
+            speak_usernames=True,
+        )
+        self.assertIsNotNone(msg)
+
+        # Standard in operator (membership test)
+        self.assertTrue("spoken_text" in msg)
+        self.assertTrue("cleaned_text" in msg)
+        self.assertTrue("author_name" in msg)
+        self.assertTrue("spokenText" in msg)
+        self.assertTrue("cleanedText" in msg)
+        self.assertFalse("non_existent_key" in msg)
+
+        # Non-string keys must return False cleanly without throwing TypeError
+        self.assertFalse(0 in msg)
+        self.assertFalse(1 in msg)
+        self.assertFalse(None in msg)
+
+        # Methods and private attributes must not appear as container keys
+        self.assertFalse("to_dict" in msg)
+        self.assertFalse("get" in msg)
+        self.assertFalse("__init__" in msg)
+
+        # Dictionary-style subscripting
+        self.assertEqual(msg["spoken_text"], "Alice says: Hello world")
+        self.assertEqual(msg["cleaned_text"], "Hello world")
+        with self.assertRaises(KeyError):
+            _ = msg["non_existent_key"]
+
+        # Dictionary helper methods: get(), keys(), values(), items()
+        self.assertEqual(msg.get("spoken_text"), "Alice says: Hello world")
+        self.assertEqual(msg.get("missing_key", "default_val"), "default_val")
+        self.assertIn("spoken_text", msg.keys())
+        self.assertIn("Alice says: Hello world", msg.values())
+        items_dict = dict(msg.items())
+        self.assertEqual(items_dict["author_name"], "Alice")
 
 
 if __name__ == "__main__":

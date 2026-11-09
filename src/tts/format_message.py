@@ -197,6 +197,8 @@ class FormattedTTSMessage:
         self.attachedFormat = attached_format
         self.isForward = is_forward
 
+    _EXCLUDED_KEYS = {"to_dict", "keys", "values", "items", "get"}
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "cleaned_text": self.cleaned_text,
@@ -210,8 +212,27 @@ class FormattedTTSMessage:
             "authorName": self.author_name,
         }
 
+    def __contains__(self, key: Any) -> bool:
+        if not isinstance(key, str) or key.startswith("_") or key in self._EXCLUDED_KEYS:
+            return False
+        return hasattr(self, key) and not callable(getattr(self, key, None))
+
     def __getitem__(self, item: str) -> Any:
+        if not isinstance(item, str) or item not in self:
+            raise KeyError(item)
         return getattr(self, item)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return getattr(self, key, default) if key in self else default
+
+    def keys(self) -> List[str]:
+        return list(self.to_dict().keys())
+
+    def values(self) -> List[Any]:
+        return list(self.to_dict().values())
+
+    def items(self) -> List[Tuple[str, Any]]:
+        return list(self.to_dict().items())
 
 
 def format_message_for_tts(
@@ -234,7 +255,7 @@ def format_message_for_tts(
     if should_announce_name is None:
         should_announce_name = opts.get("shouldAnnounceName", opts.get("should_announce_name", speak_usernames))
     if announce_links is None:
-        announce_links = opts.get("announceLinks", opts.get("announce_links", False))
+        announce_links = opts.get("announceLinks", opts.get("announce_links", True))
 
     # Resolve message content
     raw_content = ""

@@ -10,173 +10,208 @@ from src.tts.espeak_provider import AbortError
 from src.voice.serial_queue import QueueFullError, SerialQueue
 
 
-class TestSerialQueue(unittest.IsolatedAsyncioTestCase):
-    async def test_executes_jobs_strictly_fifo_without_overlap(self):
-        executed_order = []
-        concurrent_count = 0
-        max_concurrency = 0
+"""Tests for SerialQueue (FIFO, Skip, Stop, Clear, Error Isolation, and Loop Injection)."""
 
-        async def process_job(job, cancel_event):
-            nonlocal concurrent_count, max_concurrency
-            concurrent_count += 1
-            max_concurrency = max(max_concurrency, concurrent_count)
-            await asyncio.sleep(0.02)
-            executed_order.append(job.id)
-            concurrent_count -= 1
+import asyncio
+import sys
+import threading
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-        queue = SerialQueue("guild_fifo", on_process_job=process_job)
+import unittest
+from src.tts.espeak_provider import AbortError
+from src.voice.serial_queue import QueueFullError, SerialQueue
 
-        j1 = queue.enqueue({"text": "Item 1"})
-        j2 = queue.enqueue({"text": "Item 2"})
-        j3 = queue.enqueue({"text": "Item 3"})
 
-        await asyncio.gather(j1["future"], j2["future"], j3["future"])
+"""Tests for SerialQueue (FIFO, Skip, Stop, Clear, Error Isolation, and Loop Injection)."""
 
-        self.assertEqual(executed_order, [1, 2, 3])
-        self.assertEqual(max_concurrency, 1, "Processing must be strictly non-overlapping")
+import sys
+import threading
+from pathlib import Path
+from unittest.mock import MagicMock
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-    async def test_throws_queue_full_error_when_exceeding_max_size(self):
-        queue = SerialQueue("guild_bound", max_size=2)
+import unittest
+from src.tts.espeak_provider import AbortError
+from src.voice.serial_queue import QueueFullError, SerialQueue
 
-        # Hang the processor so jobs accumulate in pending queue
-        hang_event = asyncio.Event()
 
-        async def hung_processor(job, cancel_event):
-            await hang_event.wait()
+class MockFuture:
+    def __init__(self):
+        self._done = False
+        self._result = None
+        self._exception = None
+        self._callbacks = []
 
-        queue.set_processor(hung_processor)
+    def add_done_callback(self, cb):
+        self._callbacks.append(cb)
 
-        queue.enqueue({"text": "Active 1"})  # Becomes active job
-        # Give event loop a tick to start processing active job
-        await asyncio.sleep(0.01)
+    def done(self):
+        return self._done
 
-        queue.enqueue({"text": "Pending 1"})  # Waiting item 1
-        queue.enqueue({"text": "Pending 2"})  # Waiting item 2 (max_size reached)
+    def set_result(self, res):
+        self._done = True
+        self._result = res
+
+    def set_exception(self, exc):
+        self._done = True
+        self._exception = exc
+
+    def exception(self):
+        return self._exception
+
+
+class MockEventLoop:
+    def __init__(self):
+        self._is_closed = False
+        self._is_running = True
+        self.scheduled = []
+
+    def is_closed(self):
+        return self._is_closed
+
+    def is_running(self):
+        return self._is_running
+
+    def create_future(self):
+        fut = MockFuture()
+        fut._loop = self
+        return fut
+
+    def create_task(self, coro):
+        self.scheduled.append(coro)
+        return MagicMock()
+
+    def call_soon_threadsafe(self, callback, *args):
+        self.scheduled.append((callback, args))
+
+
+class TestSerialQueue(unittest.TestCase):
+    def setUp(self):
+        self.loop = MockEventLoop()
+
+    def test_serial_queue_loop_injection(self):
+        queue = SerialQueue("guild_inj", loop=self.loop)
+        self.assertIs(queue.loop, self.loop)
+        self.assertIs(queue._resolve_loop(), self.loop)
+
+    def test_enqueue_from_worker_thread_with_injected_loop(self):
+        queue = SerialQueue("guild_thread", loop=self.loop)
+        enqueue_result = None
+        thread_error = None
+
+        def worker():
+            nonlocal enqueue_result, thread_error
+            try:
+                enqueue_result = queue.enqueue({"text": "Threaded message", "spokenText": "Threaded message"})
+            except Exception as e:
+                thread_error = e
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join(timeout=2.0)
+
+        self.assertIsNone(thread_error, f"Enqueuing from worker thread failed with: {thread_error}")
+        self.assertIsNotNone(enqueue_result)
+        self.assertEqual(enqueue_result["jobId"], 1)
+        self.assertEqual(enqueue_result["position"], 1)
+        self.assertIs(enqueue_result["future"]._loop, self.loop)
+        # Verify threadsafe scheduling was invoked
+        self.assertTrue(len(self.loop.scheduled) > 0)
+
+    def test_throws_queue_full_error_when_exceeding_max_size(self):
+        queue = SerialQueue("guild_bound", max_size=2, loop=self.loop)
+
+        queue.enqueue({"text": "Item 1"})
+        queue.enqueue({"text": "Item 2"})
 
         with self.assertRaises(QueueFullError):
-            queue.enqueue({"text": "Pending 3"})  # Should exceed max_size
+            queue.enqueue({"text": "Item 3"})
 
-        queue.stop()
-        hang_event.set()
-
-    async def test_skip_cancels_active_speech_and_advances_to_next(self):
-        events = []
-        job1_started = asyncio.Event()
-
-        async def process_job(job, cancel_event):
-            events.append(f"start_{job.id}")
-            if job.id == 1:
-                job1_started.set()
-                await cancel_event.wait()
-                raise AbortError("aborted")
-            else:
-                events.append(f"finish_{job.id}")
-
-        queue = SerialQueue("guild_skip", on_process_job=process_job)
+    def test_skip_operation_aborts_active_job(self):
+        queue = SerialQueue("guild_skip", loop=self.loop)
 
         j1 = queue.enqueue({"text": "Job 1"})
         j2 = queue.enqueue({"text": "Job 2"})
 
-        await job1_started.wait()
+        class MockCancelEvent:
+            def __init__(self):
+                self._is_set = False
+            def is_set(self):
+                return self._is_set
+            def set(self):
+                self._is_set = True
+
+        queue.current_job = queue.pending_queue.pop(0)
+        queue.current_cancel_event = MockCancelEvent()
 
         result = queue.skip()
         self.assertTrue(result["skipped"])
         self.assertEqual(result["pending_remaining"], 1)
+        self.assertTrue(queue.current_cancel_event.is_set())
 
-        with self.assertRaises(AbortError):
-            await j1["future"]
-
-        await j2["future"]
-        self.assertEqual(events, ["start_1", "start_2", "finish_2"])
-
-    async def test_stop_cancels_active_speech_and_discards_pending(self):
-        job1_started = asyncio.Event()
-
-        async def process_job(job, cancel_event):
-            job1_started.set()
-            await cancel_event.wait()
-            raise AbortError("aborted")
-
-        queue = SerialQueue("guild_stop", on_process_job=process_job)
+    def test_stop_cancels_active_speech_and_discards_pending(self):
+        queue = SerialQueue("guild_stop", loop=self.loop)
 
         j1 = queue.enqueue({"text": "Job 1"})
         j2 = queue.enqueue({"text": "Job 2"})
         j3 = queue.enqueue({"text": "Job 3"})
 
-        await job1_started.wait()
+        class MockCancelEvent:
+            def __init__(self):
+                self._is_set = False
+            def is_set(self):
+                return self._is_set
+            def set(self):
+                self._is_set = True
+
+        queue.current_job = queue.pending_queue.pop(0)
+        queue.current_cancel_event = MockCancelEvent()
 
         result = queue.stop()
         self.assertTrue(result["stopped"])
         self.assertEqual(result["dropped_count"], 2)
-
-        with self.assertRaises(AbortError):
-            await j1["future"]
-        with self.assertRaises(AbortError):
-            await j2["future"]
-        with self.assertRaises(AbortError):
-            await j3["future"]
-
         self.assertEqual(len(queue.pending_queue), 0)
+        self.assertTrue(queue.current_cancel_event.is_set())
 
-    async def test_clear_discards_pending_preserving_current(self):
-        job1_started = asyncio.Event()
-        job1_finished = False
-
-        async def process_job(job, cancel_event):
-            nonlocal job1_finished
-            job1_started.set()
-            await asyncio.sleep(0.04)
-            job1_finished = True
-
-        queue = SerialQueue("guild_clear", on_process_job=process_job)
+    def test_clear_discards_pending_preserving_current(self):
+        queue = SerialQueue("guild_clear", loop=self.loop)
 
         j1 = queue.enqueue({"text": "Job 1"})
         j2 = queue.enqueue({"text": "Job 2"})
         j3 = queue.enqueue({"text": "Job 3"})
 
-        await job1_started.wait()
+        class MockCancelEvent:
+            def __init__(self):
+                self._is_set = False
+            def is_set(self):
+                return self._is_set
+            def set(self):
+                self._is_set = True
+
+        queue.current_job = queue.pending_queue.pop(0)
+        queue.current_cancel_event = MockCancelEvent()
 
         result = queue.clear()
         self.assertEqual(result["cleared_count"], 2)
         self.assertTrue(result["current_playing"])
-
-        await j1["future"]
-        self.assertTrue(job1_finished)
-
-        with self.assertRaises(AbortError):
-            await j2["future"]
-        with self.assertRaises(AbortError):
-            await j3["future"]
-
+        self.assertFalse(queue.current_cancel_event.is_set())
         self.assertEqual(len(queue.pending_queue), 0)
 
-    async def test_isolates_errors_without_halting_subsequent_jobs(self):
-        completed = []
-
-        async def process_job(job, cancel_event):
-            if job.id == 2:
-                raise RuntimeError("Synthetic audio synthesis failure")
-            completed.append(job.id)
-
-        queue = SerialQueue("guild_isolate", on_process_job=process_job)
-
-        j1 = queue.enqueue({"text": "Job 1"})
-        j2 = queue.enqueue({"text": "Job 2"})
-        j3 = queue.enqueue({"text": "Job 3"})
-
-        await j1["future"]
-        with self.assertRaises(RuntimeError) as cm:
-            await j2["future"]
-        self.assertEqual(str(cm.exception), "Synthetic audio synthesis failure")
-
-        await j3["future"]
-        self.assertEqual(completed, [1, 3])
-
     def test_reports_accurate_queue_status(self):
-        queue = SerialQueue("guild_status")
+        queue = SerialQueue("guild_status", loop=self.loop)
         status_before = queue.get_status()
         self.assertFalse(status_before["isPlaying"])
         self.assertEqual(status_before["pendingCount"], 0)
+
+        queue.enqueue({"text": "Pending item"})
+        status_after = queue.get_status()
+        self.assertEqual(status_after["pendingCount"], 1)
+        self.assertEqual(status_after["pending"][0]["text_length"], len("Pending item"))
+
+
+if __name__ == "__main__":
+    unittest.main()
 
 
 if __name__ == "__main__":

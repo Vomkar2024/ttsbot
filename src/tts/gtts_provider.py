@@ -61,11 +61,17 @@ ACCENT_TLDS = {
 class GTTSProvider:
     """Online TTS provider utilizing Google Translate TTS for natural-sounding speech."""
 
-    def __init__(self, allow_mock_fallback: bool = False, options: Optional[dict] = None):
+    def __init__(
+        self,
+        allow_mock_fallback: bool = False,
+        options: Optional[dict] = None,
+        timeout: float = 5.0,
+    ):
         opts = options or {}
         self.allow_mock_fallback = opts.get(
             "allowMockFallback", opts.get("allow_mock_fallback", allow_mock_fallback)
         )
+        self.timeout = float(opts.get("timeout", opts.get("timeoutSec", timeout)))
 
     def resolve_params(
         self,
@@ -138,6 +144,7 @@ class GTTSProvider:
             raise ValueError("Cannot synthesize empty or whitespace-only text")
 
         gtts_lang, gtts_tld = self.resolve_params(language, voice)
+        timeout_sec = float(opts.get("timeout", opts.get("timeoutSec", self.timeout)))
 
         # Flag for slow speech if requested
         slow = bool(speed is not None and speed < 120)
@@ -146,7 +153,7 @@ class GTTSProvider:
             try:
                 from gtts import gTTS
 
-                tts = gTTS(text=text, lang=gtts_lang, tld=gtts_tld, slow=slow)
+                tts = gTTS(text=text, lang=gtts_lang, tld=gtts_tld, slow=slow, timeout=timeout_sec)
                 fp = io.BytesIO()
                 tts.write_to_fp(fp)
                 return fp.getvalue()
@@ -160,7 +167,22 @@ class GTTSProvider:
                 raise err
 
         try:
-            audio_bytes = await asyncio.to_thread(_fetch_audio)
+            audio_bytes = await asyncio.wait_for(
+                asyncio.to_thread(_fetch_audio),
+                timeout=timeout_sec + 1.0,
+            )
+        except asyncio.TimeoutError as te:
+            logger.warning(
+                "[GTTSProvider] Google TTS request timed out after %.1fs for lang=%s tld=%s",
+                timeout_sec,
+                gtts_lang,
+                gtts_tld,
+            )
+            if cancel_event and cancel_event.is_set():
+                raise AbortError("Synthesis cancelled during execution") from te
+            if self.allow_mock_fallback:
+                return self._generate_mock_wav(text)
+            raise TimeoutError(f"Google TTS request timed out after {timeout_sec}s") from te
         except Exception as e:
             if cancel_event and cancel_event.is_set():
                 raise AbortError("Synthesis cancelled during execution") from e
