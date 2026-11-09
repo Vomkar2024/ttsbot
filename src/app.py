@@ -163,10 +163,38 @@ async def main_async() -> None:
         logger.warning("[VoiceBridge] DISCORD_TOKEN is missing in .env. Bot cannot connect to Discord.")
         return
 
+    app_id = bot.cfg.DISCORD_CLIENT_ID or "YOUR_APP_ID"
+
     try:
         await bot.start(bot.cfg.DISCORD_TOKEN)
+    except discord.errors.LoginFailure:
+        logger.critical(
+            "[VoiceBridge] Discord refused the bot token (HTTP 401 Unauthorized).\n"
+            "  The token in .env is invalid, revoked, or expired.\n"
+            "  How to fix:\n"
+            "  1. Go to Discord Developer Portal: https://discord.com/developers/applications/%s/bot\n"
+            "  2. Click 'Reset Token' and copy the newly generated token.\n"
+            "  3. Paste the new token into your .env file: DISCORD_TOKEN=<new_token>\n"
+            "  4. Ensure 'MESSAGE CONTENT INTENT' is enabled under Privileged Gateway Intents.\n"
+            "  5. Verify token status anytime with: python scripts/verify_token.py",
+            app_id,
+        )
+    except discord.errors.PrivilegedIntentsRequired:
+        logger.critical(
+            "[VoiceBridge] Discord refused connection: Disallowed Privileged Intents.\n"
+            "  VoiceBridge TTS Bot requires 'Message Content Intent' to read messages aloud.\n"
+            "  How to fix:\n"
+            "  1. Go to Discord Developer Portal: https://discord.com/developers/applications/%s/bot\n"
+            "  2. Scroll down to 'Privileged Gateway Intents'.\n"
+            "  3. Turn ON 'MESSAGE CONTENT INTENT'.\n"
+            "  4. Click 'Save Changes' at the bottom of the page.\n"
+            "  5. Restart the bot: python main.py",
+            app_id,
+        )
     except (asyncio.CancelledError, KeyboardInterrupt):
         pass
+    except Exception as err:
+        logger.critical("[VoiceBridge] Unexpected error during bot startup: %s", err, exc_info=True)
     finally:
         await bot.stop()
 

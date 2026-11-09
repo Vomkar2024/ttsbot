@@ -35,10 +35,10 @@ async def deploy() -> None:
     )
 
     async with bot:
-        # Log in without running full event loop
-        await bot.login(config.DISCORD_TOKEN)
-
         try:
+            # Log in without running full event loop
+            await bot.login(config.DISCORD_TOKEN)
+
             if config.DISCORD_GUILD_ID:
                 guild_id = int(config.DISCORD_GUILD_ID)
                 guild_obj = discord.Object(id=guild_id)
@@ -50,6 +50,15 @@ async def deploy() -> None:
                 print("[Deploy] Targeting global application commands...")
                 synced = await bot.tree.sync()
                 print(f"✅ Successfully registered {len(synced)} global command(s). (Global propagation may take up to an hour)")
+        except discord.errors.LoginFailure:
+            app_id = config.DISCORD_CLIENT_ID or "YOUR_APP_ID"
+            print(
+                f"\n❌ [Authentication Failed] Discord refused the bot token.\n"
+                f"   Reset your token at: https://discord.com/developers/applications/{app_id}/bot\n"
+                f"   Then update DISCORD_TOKEN in .env and retry.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         except Exception as err:
             print(f"❌ Command deployment failed: {err}", file=sys.stderr)
             sys.exit(1)
