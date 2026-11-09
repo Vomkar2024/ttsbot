@@ -102,13 +102,13 @@ def _parse_bool(val: Optional[str], default_val: bool = True) -> bool:
     return cleaned.lower() not in ("false", "0", "no", "off")
 
 
-def _parse_num(val: Optional[str], default_val: int) -> int:
+def _parse_num(val: Optional[str], default_val: int, min_val: int = 1) -> int:
     cleaned = _clean_str(val)
     if not cleaned:
         return default_val
     try:
         num = int(cleaned)
-        return num if num > 0 else default_val
+        return num if num >= min_val else default_val
     except ValueError:
         return default_val
 
@@ -137,6 +137,8 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
         raw_client_id = _extract_app_id_from_token(raw_token)
 
     raw_guild_id = _clean_str(source.get("DISCORD_GUILD_ID"))
+    if raw_guild_id and not raw_guild_id.isdigit():
+        raw_guild_id = ""
 
     raw_tts_engine = _clean_str(source.get("TTS_ENGINE")).lower() or DEFAULT_TTS_ENGINE
     raw_tts_bin = _clean_str(source.get("TTS_BIN")) or "espeak-ng"
@@ -149,11 +151,23 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
         db_path = str(Path(raw_db_path).resolve())
 
     speak_usernames = _parse_bool(source.get("SPEAK_USERNAMES"), True)
-    speaker_cooldown_sec = _parse_num(source.get("SPEAKER_COOLDOWN_SEC"), DEFAULT_SPEAKER_COOLDOWN_SEC)
-    max_queue_size = _parse_num(source.get("MAX_QUEUE_SIZE"), DEFAULT_MAX_QUEUE_SIZE)
-    max_message_chars = _parse_num(source.get("MAX_MESSAGE_CHARS"), DEFAULT_MAX_MESSAGE_CHARS)
-    voice_ready_timeout_ms = _parse_num(source.get("VOICE_READY_TIMEOUT_MS"), DEFAULT_VOICE_READY_TIMEOUT_MS)
-    voice_disconnect_grace_ms = _parse_num(source.get("VOICE_DISCONNECT_GRACE_MS"), DEFAULT_VOICE_DISCONNECT_GRACE_MS)
+    speaker_cooldown_sec = _parse_num(
+        source.get("SPEAKER_COOLDOWN_SEC"),
+        DEFAULT_SPEAKER_COOLDOWN_SEC,
+        min_val=0,
+    )
+    max_queue_size = _parse_num(source.get("MAX_QUEUE_SIZE"), DEFAULT_MAX_QUEUE_SIZE, min_val=1)
+    max_message_chars = _parse_num(source.get("MAX_MESSAGE_CHARS"), DEFAULT_MAX_MESSAGE_CHARS, min_val=1)
+    voice_ready_timeout_ms = _parse_num(
+        source.get("VOICE_READY_TIMEOUT_MS"),
+        DEFAULT_VOICE_READY_TIMEOUT_MS,
+        min_val=100,
+    )
+    voice_disconnect_grace_ms = _parse_num(
+        source.get("VOICE_DISCONNECT_GRACE_MS"),
+        DEFAULT_VOICE_DISCONNECT_GRACE_MS,
+        min_val=0,
+    )
     announce_links = _parse_bool(source.get("ANNOUNCE_LINKS"), True)
     gtts_timeout_sec = _parse_float(source.get("GTTS_TIMEOUT_SEC"), 5.0)
 

@@ -9,13 +9,13 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-import discord
-from discord.ext import commands
+import discord  # noqa: E402
+from discord.ext import commands  # noqa: E402
 
-from src.commands.tts_commands import setup_tts_commands
-from src.config import load_config
-from src.storage.settings_store import SettingsStore
-from src.voice.session_manager import VoiceSessionManager
+from src.commands.tts_commands import setup_tts_commands  # noqa: E402
+from src.config import load_config  # noqa: E402
+from src.storage.settings_store import SettingsStore  # noqa: E402
+from src.voice.session_manager import VoiceSessionManager  # noqa: E402
 
 config = load_config()
 
@@ -45,7 +45,7 @@ async def deploy() -> None:
             # Log in without running full event loop
             await bot.login(config.DISCORD_TOKEN)
 
-            if config.DISCORD_GUILD_ID:
+            if config.DISCORD_GUILD_ID and config.DISCORD_GUILD_ID.isdigit():
                 guild_id = int(config.DISCORD_GUILD_ID)
                 guild_obj = discord.Object(id=guild_id)
                 print(f"[Deploy] Targeting development guild: {guild_id}")
@@ -53,6 +53,8 @@ async def deploy() -> None:
                 synced = await bot.tree.sync(guild=guild_obj)
                 print(f"✅ Successfully registered {len(synced)} guild command(s). Available immediately!")
             else:
+                if config.DISCORD_GUILD_ID:
+                    print(f"⚠️ [Warning] DISCORD_GUILD_ID '{config.DISCORD_GUILD_ID}' is non-numeric. Deploying globally instead.")
                 print("[Deploy] Targeting global application commands...")
                 synced = await bot.tree.sync()
                 print(f"✅ Successfully registered {len(synced)} global command(s). (Global propagation may take up to an hour)")

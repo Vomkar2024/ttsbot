@@ -7,7 +7,6 @@ import os
 import sys
 import urllib.error
 import urllib.request
-from pathlib import Path
 from dotenv import load_dotenv
 
 # Ensure environment variables are loaded
@@ -44,7 +43,8 @@ async def test_gateway_intents(raw_token: str, app_id: str) -> bool:
     print("\nTesting Gateway connection with Privileged Intents (Message Content)...")
 
     try:
-        ready_future = asyncio.get_event_loop().create_future()
+        loop = asyncio.get_running_loop()
+        ready_future = loop.create_future()
 
         @client.event
         async def on_ready():

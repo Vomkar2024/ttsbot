@@ -2,10 +2,8 @@
 
 import asyncio
 import io
-import math
 import shutil
 import struct
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -191,49 +189,38 @@ class EspeakProvider:
                 f"eSpeak process error ({self.tts_bin}): {err}. Ensure eSpeak NG is installed and on PATH or TTS_BIN is set."
             ) from err
 
-        async def _feed_input():
-            try:
-                stdout_data, stderr_data = await proc.communicate(text.encode("utf-8"))
-                return stdout_data, stderr_data
-            except Exception as e:
-                raise e
+        communicate_task = asyncio.create_task(proc.communicate(text.encode("utf-8")))
 
-        # Monitor cancellation
-        communicate_task = asyncio.create_task(_feed_input())
+        tasks = [communicate_task]
+        cancel_task = None
+        if cancel_event is not None:
+            cancel_task = asyncio.create_task(cancel_event.wait())
+            tasks.append(cancel_task)
 
-        if cancel_event is not None or sig is not None:
-            async def _watch_cancel():
-                while not communicate_task.done():
-                    if (cancel_event and cancel_event.is_set()) or (sig and getattr(sig, "aborted", False)):
-                        try:
-                            proc.terminate()
-                        except Exception:
-                            pass
-                        communicate_task.cancel()
-                        break
-                    await asyncio.sleep(0.01)
+        done, pending = await asyncio.wait(
+            tasks,
+            timeout=15.0,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
 
-            watcher_task = asyncio.create_task(_watch_cancel())
-        else:
-            watcher_task = None
+        for t in pending:
+            t.cancel()
 
-        try:
-            stdout_data, stderr_data = await asyncio.wait_for(communicate_task, timeout=15.0)
-        except asyncio.TimeoutError:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-            raise RuntimeError(f"eSpeak process timed out after 15 seconds")
-        except asyncio.CancelledError:
+        if (sig and getattr(sig, "aborted", False)) or (cancel_task and cancel_task in done):
             try:
                 proc.terminate()
             except Exception:
                 pass
             raise AbortError("Synthesis aborted by signal")
-        finally:
-            if watcher_task and not watcher_task.done():
-                watcher_task.cancel()
+
+        if communicate_task not in done:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            raise RuntimeError("eSpeak process timed out after 15 seconds")
+
+        stdout_data, stderr_data = communicate_task.result()
 
         if proc.returncode != 0:
             err_msg = stderr_data.decode("utf-8", errors="replace").strip()
@@ -246,6 +233,15 @@ class EspeakProvider:
 
     def synthesize_sync(self, text: str, **kwargs) -> bytes:
         """Synchronous synthesis helper for quick tests."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(lambda: asyncio.run(self.synthesize(text, **kwargs))).result()
         return asyncio.run(self.synthesize(text, **kwargs))
 
     def _generate_mock_wav(self, text: str) -> bytes:

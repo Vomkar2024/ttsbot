@@ -79,12 +79,14 @@ class TTSBot(commands.Bot):
         )
 
         # Sync commands if token is present
-        if self.cfg.DISCORD_GUILD_ID:
+        if self.cfg.DISCORD_GUILD_ID and self.cfg.DISCORD_GUILD_ID.isdigit():
             guild_obj = discord.Object(id=int(self.cfg.DISCORD_GUILD_ID))
             self.tree.copy_global_to(guild=guild_obj)
             synced = await self.tree.sync(guild=guild_obj)
             logger.info("Synced %d command(s) to development guild %s", len(synced), self.cfg.DISCORD_GUILD_ID)
         else:
+            if self.cfg.DISCORD_GUILD_ID:
+                logger.warning("DISCORD_GUILD_ID '%s' is not numeric; syncing globally instead.", self.cfg.DISCORD_GUILD_ID)
             synced = await self.tree.sync()
             logger.info("Synced %d global application command(s)", len(synced))
 
@@ -114,39 +116,77 @@ class TTSBot(commands.Bot):
         before: discord.VoiceState,
         after: discord.VoiceState,
     ) -> None:
-        guild = member.guild
-        if not guild or not self.user:
-            return
-
-        bot_id = self.user.id
-        session = self.session_manager.get_session(str(guild.id))
-        if not session:
-            return
-
-        # Case 1: Bot disconnect or move
-        if member.id == bot_id:
-            if not after.channel:
-                logger.info("[VoiceStateUpdate Guild %s] Bot disconnected from voice. Cleaning up session.", guild.id)
-                self.session_manager.remove_session(str(guild.id))
+        try:
+            guild = member.guild
+            if not guild or not self.user:
                 return
-            if before.channel and after.channel != before.channel:
-                logger.info("[VoiceStateUpdate Guild %s] Bot moved to voice channel %s.", guild.id, after.channel.id)
-                session.channel_id = str(after.channel.id)
-            return
 
-        # Case 2: Human members leaving bot's channel
-        if session.channel_id:
-            channel = guild.get_channel(int(session.channel_id))
-            if channel and isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
-                human_members = [m for m in channel.members if not m.bot]
-                if len(human_members) == 0:
-                    logger.info("[VoiceStateUpdate Guild %s] Voice channel is empty. Leaving.", guild.id)
-                    await self.session_manager.leave(str(guild.id))
+            bot_id = self.user.id
+            session = self.session_manager.get_session(str(guild.id))
+            if not session:
+                return
+
+            # Case 1: Bot disconnect or move
+            if member.id == bot_id:
+                if not after.channel:
+                    logger.info(
+                        "[VoiceStateUpdate Guild %s] Bot disconnected from voice (grace: %.1fs).",
+                        guild.id,
+                        self.cfg.voice_disconnect_grace_sec,
+                    )
+                    if self.cfg.voice_disconnect_grace_sec > 0:
+                        async def _delayed_cleanup() -> None:
+                            await asyncio.sleep(self.cfg.voice_disconnect_grace_sec)
+                            curr_session = self.session_manager.get_session(str(guild.id))
+                            vc = getattr(guild, "voice_client", None)
+                            if curr_session and (not vc or not vc.is_connected()):
+                                logger.info(
+                                    "[VoiceStateUpdate Guild %s] Disconnect grace expired without reconnection. Cleaning up session.",
+                                    guild.id,
+                                )
+                                self.session_manager.remove_session(str(guild.id))
+
+                        if getattr(session, "_reconnect_task", None) and not session._reconnect_task.done():
+                            session._reconnect_task.cancel()
+                        session._reconnect_task = asyncio.create_task(_delayed_cleanup())
+                    else:
+                        self.session_manager.remove_session(str(guild.id))
+                    return
+
+                # Bot reconnected or moved to a channel
+                if getattr(session, "_reconnect_task", None) and not session._reconnect_task.done():
+                    session._reconnect_task.cancel()
+                    session._reconnect_task = None
+
+                if before.channel and after.channel != before.channel:
+                    logger.info("[VoiceStateUpdate Guild %s] Bot moved to voice channel %s.", guild.id, after.channel.id)
+                    session.channel_id = str(after.channel.id)
+                return
+
+            # Case 2: Human members leaving bot's channel
+            if session.channel_id:
+                left_bot_channel = (
+                    before.channel is not None
+                    and str(before.channel.id) == session.channel_id
+                    and (after.channel is None or str(after.channel.id) != session.channel_id)
+                )
+                if left_bot_channel:
+                    channel = before.channel
+                    if channel and hasattr(channel, "members"):
+                        human_members = [m for m in channel.members if not getattr(m, "bot", False)]
+                        if len(human_members) == 0:
+                            logger.info("[VoiceStateUpdate Guild %s] Voice channel is empty. Leaving.", guild.id)
+                            await self.session_manager.leave(str(guild.id))
+        except Exception as err:
+            logger.error("[Event:VoiceStateUpdate] Uncaught error: %s", err, exc_info=True)
 
     async def stop(self) -> None:
         logger.info("[TTS] Shutting down gracefully...")
         try:
-            self.session_manager.destroy_all()
+            if hasattr(self.session_manager, "destroy_all_async"):
+                await self.session_manager.destroy_all_async()
+            else:
+                self.session_manager.destroy_all()
             self.settings_store.close()
             await self.close()
             logger.info("[TTS] Cleanup complete.")

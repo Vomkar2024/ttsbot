@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import discord
 
@@ -289,6 +289,21 @@ class VoiceSessionManager:
         self.sessions.clear()
 
     destroyAll = destroy_all
+
+    async def destroy_all_async(self) -> None:
+        """Asynchronously cleans up and disconnects all active voice sessions."""
+        sessions_to_destroy = list(self.sessions.values())
+        self.sessions.clear()
+        for session in sessions_to_destroy:
+            try:
+                if hasattr(session, "destroy_async"):
+                    await session.destroy_async()
+                elif hasattr(session, "destroy"):
+                    session.destroy()
+            except Exception as err:
+                logger.warning("[VoiceSessionManager] Error during session destroy: %s", err)
+
+    destroyAllAsync = destroy_all_async
 
 
 __all__ = ["VoiceSessionManager", "VoiceSessionError"]

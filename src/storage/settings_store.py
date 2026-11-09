@@ -1,11 +1,10 @@
 """Persistent SQLite storage for Discord server and user TTS preferences."""
 
-import os
 import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from ..constants import DEFAULT_LANGUAGE, DEFAULT_VOICE
 
@@ -25,6 +24,13 @@ class SettingsStore:
             isolation_level=None,  # autocommit mode
         )
         self.conn.row_factory = sqlite3.Row
+        if db_path != ":memory:":
+            try:
+                self.conn.execute("PRAGMA journal_mode = WAL;")
+                self.conn.execute("PRAGMA synchronous = NORMAL;")
+                self.conn.execute("PRAGMA busy_timeout = 5000;")
+            except Exception:
+                pass
         self._init_tables()
 
     def _init_tables(self) -> None:

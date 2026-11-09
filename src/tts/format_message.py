@@ -12,7 +12,7 @@ Implements the text processing pipeline from Discord-TTS/Bot (process_msg.rs):
 
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..constants import (
     ACRONYMS,

@@ -2,7 +2,7 @@
 
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from src.tts.espeak_provider import AbortError
 from src.tts.gtts_provider import GTTSProvider

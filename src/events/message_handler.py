@@ -3,8 +3,6 @@
 import logging
 from typing import Any, Dict, Optional
 
-import discord
-
 from ..storage.settings_store import SettingsStore
 from ..tts.format_message import format_message_for_tts
 from ..voice.serial_queue import QueueFullError

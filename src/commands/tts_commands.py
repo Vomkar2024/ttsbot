@@ -1,9 +1,11 @@
 """Discord slash commands for TTS."""
 
+import logging
 from typing import List, Optional, Union
 
 import discord
 from discord import app_commands
+from discord.ext import commands
 
 from ..constants import (
     COMMAND_CLEAR,
@@ -15,13 +17,14 @@ from ..constants import (
     COMMAND_SKIP,
     COMMAND_STATUS,
     COMMAND_STOP,
-    COMMAND_TTS,
     COMMAND_VOICE,
     LANGUAGE_CHOICES,
     VOICE_VARIANT_CHOICES,
 )
 from ..storage.settings_store import SettingsStore
 from ..voice.session_manager import VoiceSessionManager
+
+logger = logging.getLogger(__name__)
 
 LANG_APP_CHOICES = [
     app_commands.Choice(name=c["name"], value=c["value"])
@@ -50,6 +53,7 @@ def setup_tts_commands(
         name=COMMAND_SETUP,
         description="Choose the text channel that should be read aloud (Manage Server required)",
     )
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(
         channel="The text or voice channel to read aloud (defaults to current channel)"
     )
@@ -64,7 +68,8 @@ def setup_tts_commands(
             )
             return
 
-        if not interaction.user.guild_permissions.manage_guild:
+        user_perms = getattr(interaction.user, "guild_permissions", None) or getattr(interaction, "permissions", None)
+        if not (user_perms and user_perms.manage_guild):
             await interaction.response.send_message(
                 "❌ You need the **Manage Server** permission to configure the TTS text channel.",
                 ephemeral=True,
@@ -72,6 +77,13 @@ def setup_tts_commands(
             return
 
         target_channel = channel or interaction.channel
+        if not target_channel:
+            await interaction.response.send_message(
+                "❌ Could not determine which channel to configure. Please specify a channel.",
+                ephemeral=True,
+            )
+            return
+
         settings_store.set_configured_channel(str(interaction.guild.id), str(target_channel.id))
 
         await interaction.response.send_message(
@@ -93,6 +105,9 @@ def setup_tts_commands(
         await interaction.response.defer()
 
         member = interaction.user
+        if not isinstance(member, discord.Member) and interaction.guild:
+            member = interaction.guild.get_member(interaction.user.id) or interaction.user
+
         voice_state = getattr(member, "voice", None)
         voice_channel = getattr(voice_state, "channel", None) if voice_state else None
 
@@ -138,15 +153,18 @@ def setup_tts_commands(
             return
 
         await interaction.response.defer()
-        left = await session_manager.leave(str(interaction.guild.id))
-        if left:
-            await interaction.followup.send(
-                "👋 Left the voice channel and discarded current and pending speech."
-            )
-        else:
-            await interaction.followup.send(
-                "ℹ️ The bot is not currently connected to voice in this server."
-            )
+        try:
+            left = await session_manager.leave(str(interaction.guild.id))
+            if left:
+                await interaction.followup.send(
+                    "👋 Left the voice channel and discarded current and pending speech."
+                )
+            else:
+                await interaction.followup.send(
+                    "ℹ️ The bot is not currently connected to voice in this server."
+                )
+        except Exception as err:
+            await interaction.followup.send(f"❌ Error leaving voice: {err}")
 
     @tree.command(
         name=COMMAND_VOICE,
@@ -173,7 +191,8 @@ def setup_tts_commands(
         user_id = str(interaction.user.id)
 
         if server:
-            if not interaction.user.guild_permissions.manage_guild:
+            user_perms = getattr(interaction.user, "guild_permissions", None) or getattr(interaction, "permissions", None)
+            if not (user_perms and user_perms.manage_guild):
                 await interaction.response.send_message(
                     "❌ You need the **Manage Server** permission to set the server-wide default voice variant.",
                     ephemeral=True,
@@ -217,7 +236,8 @@ def setup_tts_commands(
         user_id = str(interaction.user.id)
 
         if server:
-            if not interaction.user.guild_permissions.manage_guild:
+            user_perms = getattr(interaction.user, "guild_permissions", None) or getattr(interaction, "permissions", None)
+            if not (user_perms and user_perms.manage_guild):
                 await interaction.response.send_message(
                     "❌ You need the **Manage Server** permission to set the server-wide default language.",
                     ephemeral=True,
@@ -464,6 +484,25 @@ def setup_tts_commands(
 
         await interaction.response.send_message(embed=embed)
 
+    if not getattr(tree, "_tts_error_handler_registered", False):
+        @tree.error
+        async def on_app_command_error(
+            interaction: discord.Interaction,
+            error: app_commands.AppCommandError,
+        ) -> None:
+            cmd_name = getattr(interaction.command, "name", "command")
+            logger.error("Command error during /%s: %s", cmd_name, error, exc_info=True)
+            msg = f"❌ An error occurred while executing `/{cmd_name}`: {error}"
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(msg, ephemeral=True)
+                else:
+                    await interaction.response.send_message(msg, ephemeral=True)
+            except Exception:
+                pass
+
+        setattr(tree, "_tts_error_handler_registered", True)
+
     return [
         setup,
         join,
@@ -478,4 +517,19 @@ def setup_tts_commands(
     ]
 
 
-__all__ = ["setup_tts_commands", "TtsCommandGroup"]
+class TTSCommandsCog(commands.Cog, name="TTS"):
+    """Cog wrapper for Discord TTS slash commands."""
+
+    def __init__(
+        self,
+        bot: commands.Bot,
+        session_manager: VoiceSessionManager,
+        settings_store: SettingsStore,
+    ):
+        self.bot = bot
+        self.session_manager = session_manager
+        self.settings_store = settings_store
+        self.commands = setup_tts_commands(self.bot.tree, session_manager, settings_store)
+
+
+__all__ = ["setup_tts_commands", "TtsCommandGroup", "TTSCommandsCog"]

@@ -1,38 +1,13 @@
-"""Tests for SerialQueue (FIFO, Skip, Stop, Clear, Error Isolation)."""
-
-import asyncio
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import unittest
-from src.tts.espeak_provider import AbortError
-from src.voice.serial_queue import QueueFullError, SerialQueue
-
-
-"""Tests for SerialQueue (FIFO, Skip, Stop, Clear, Error Isolation, and Loop Injection)."""
-
-import asyncio
-import sys
-import threading
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-import unittest
-from src.tts.espeak_provider import AbortError
-from src.voice.serial_queue import QueueFullError, SerialQueue
-
-
 """Tests for SerialQueue (FIFO, Skip, Stop, Clear, Error Isolation, and Loop Injection)."""
 
 import sys
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import unittest
-from src.tts.espeak_provider import AbortError
 from src.voice.serial_queue import QueueFullError, SerialQueue
 
 
@@ -131,14 +106,16 @@ class TestSerialQueue(unittest.TestCase):
     def test_skip_operation_aborts_active_job(self):
         queue = SerialQueue("guild_skip", loop=self.loop)
 
-        j1 = queue.enqueue({"text": "Job 1"})
-        j2 = queue.enqueue({"text": "Job 2"})
+        queue.enqueue({"text": "Job 1"})
+        queue.enqueue({"text": "Job 2"})
 
         class MockCancelEvent:
             def __init__(self):
                 self._is_set = False
+
             def is_set(self):
                 return self._is_set
+
             def set(self):
                 self._is_set = True
 
@@ -153,15 +130,17 @@ class TestSerialQueue(unittest.TestCase):
     def test_stop_cancels_active_speech_and_discards_pending(self):
         queue = SerialQueue("guild_stop", loop=self.loop)
 
-        j1 = queue.enqueue({"text": "Job 1"})
-        j2 = queue.enqueue({"text": "Job 2"})
-        j3 = queue.enqueue({"text": "Job 3"})
+        queue.enqueue({"text": "Job 1"})
+        queue.enqueue({"text": "Job 2"})
+        queue.enqueue({"text": "Job 3"})
 
         class MockCancelEvent:
             def __init__(self):
                 self._is_set = False
+
             def is_set(self):
                 return self._is_set
+
             def set(self):
                 self._is_set = True
 
@@ -177,15 +156,17 @@ class TestSerialQueue(unittest.TestCase):
     def test_clear_discards_pending_preserving_current(self):
         queue = SerialQueue("guild_clear", loop=self.loop)
 
-        j1 = queue.enqueue({"text": "Job 1"})
-        j2 = queue.enqueue({"text": "Job 2"})
-        j3 = queue.enqueue({"text": "Job 3"})
+        queue.enqueue({"text": "Job 1"})
+        queue.enqueue({"text": "Job 2"})
+        queue.enqueue({"text": "Job 3"})
 
         class MockCancelEvent:
             def __init__(self):
                 self._is_set = False
+
             def is_set(self):
                 return self._is_set
+
             def set(self):
                 self._is_set = True
 
@@ -208,10 +189,6 @@ class TestSerialQueue(unittest.TestCase):
         status_after = queue.get_status()
         self.assertEqual(status_after["pendingCount"], 1)
         self.assertEqual(status_after["pending"][0]["text_length"], len("Pending item"))
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 if __name__ == "__main__":
