@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+package-lock.json
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+env/
+dist/
+build/
+*.egg-info/
+
+# Environment and sensitive tokens
+.env
+.env.local
+.env.*.local
+
+# SQLite database files and locks
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Temporary / Audio files
+temp_audio/
+*.tmp
+*.wav
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# IDEs and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

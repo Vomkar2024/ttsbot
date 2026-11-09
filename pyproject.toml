@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voicebridge-tts-bot"
+version = "1.0.0"
+description = "An independent Discord text-to-speech bot powered by local eSpeak NG and SQLite in Python"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "discord.py>=2.3.0",
+    "PyNaCl>=1.5.0",
+    "python-dotenv>=1.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
