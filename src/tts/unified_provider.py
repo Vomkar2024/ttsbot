@@ -39,13 +39,20 @@ class UnifiedTTSProvider:
     @property
     def tts_bin(self) -> str:
         """Configured eSpeak binary executable path."""
-        return self.espeak.tts_bin
+        espeak_obj = getattr(self, "espeak", None)
+        return getattr(espeak_obj, "tts_bin", "espeak-ng") if espeak_obj else "espeak-ng"
 
     def resolve_binary_path(self) -> Optional[str]:
         """Resolves the underlying eSpeak binary path if available."""
-        return self.espeak.resolve_binary_path()
+        if hasattr(self, "espeak") and hasattr(self.espeak, "resolve_binary_path"):
+            return self.espeak.resolve_binary_path()
+        return None
 
     _resolve_binary_path = resolve_binary_path
+
+    def has_binary(self) -> bool:
+        """Check if the underlying eSpeak binary can be located."""
+        return self.resolve_binary_path() is not None
 
     def resolve_voice_arg(
         self,

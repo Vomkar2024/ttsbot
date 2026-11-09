@@ -249,12 +249,30 @@ async def main_async() -> None:
 
     # Pre-flight system binary check (eSpeak NG & FFmpeg)
     import shutil
-    resolved_espeak = (
-        bot.tts_provider.resolve_binary_path()
-        if hasattr(bot.tts_provider, "resolve_binary_path")
-        else (getattr(bot, "espeak_provider", None) and getattr(bot.espeak_provider, "resolve_binary_path", lambda: None)())
-    )
-    resolved_ffmpeg = shutil.which(bot.cfg.FFMPEG_PATH)
+
+    resolved_espeak = None
+    try:
+        provider = getattr(bot, "tts_provider", None) or getattr(bot, "espeak_provider", None)
+        if provider is not None:
+            resolve_fn = getattr(provider, "resolve_binary_path", None) or getattr(provider, "_resolve_binary_path", None)
+            if callable(resolve_fn):
+                resolved_espeak = resolve_fn()
+            elif hasattr(provider, "espeak"):
+                espeak_obj = getattr(provider, "espeak", None)
+                sub_resolve = getattr(espeak_obj, "resolve_binary_path", None) or getattr(espeak_obj, "_resolve_binary_path", None)
+                if callable(sub_resolve):
+                    resolved_espeak = sub_resolve()
+    except Exception as espeak_check_err:
+        logger.debug("[Preflight] Exception while resolving eSpeak binary: %s", espeak_check_err)
+        resolved_espeak = None
+
+    resolved_ffmpeg = None
+    try:
+        resolved_ffmpeg = shutil.which(bot.cfg.FFMPEG_PATH)
+    except Exception as ffmpeg_check_err:
+        logger.debug("[Preflight] Exception while checking FFmpeg: %s", ffmpeg_check_err)
+        resolved_ffmpeg = None
+
     is_gtts_primary = (getattr(bot.cfg, "TTS_ENGINE", "gtts") or "").lower() in ("gtts", "google")
 
     if not resolved_ffmpeg or (not resolved_espeak and not is_gtts_primary):

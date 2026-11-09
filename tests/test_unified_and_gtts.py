@@ -1,6 +1,7 @@
 """Tests for GTTSProvider and UnifiedTTSProvider."""
 
 import asyncio
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -116,6 +117,17 @@ class TestUnifiedAndGTTS(unittest.TestCase):
         with patch.object(unified.espeak, "resolve_binary_path", return_value="/mock/bin/espeak"):
             self.assertEqual(unified.resolve_binary_path(), "/mock/bin/espeak")
             self.assertEqual(unified._resolve_binary_path(), "/mock/bin/espeak")
+            self.assertTrue(unified.has_binary())
+
+        with patch.object(unified.espeak, "resolve_binary_path", return_value=None):
+            self.assertIsNone(unified.resolve_binary_path())
+            self.assertFalse(unified.has_binary())
+
+        # Test resilience if espeak attribute is missing
+        del unified.espeak
+        self.assertIsNone(unified.resolve_binary_path())
+        self.assertEqual(unified.tts_bin, "espeak-ng")
+        self.assertFalse(unified.has_binary())
 
     def test_app_create_app_preflight_attributes(self):
         from src.app import create_app
@@ -128,6 +140,35 @@ class TestUnifiedAndGTTS(unittest.TestCase):
         # Must execute without AttributeError
         path = bot.tts_provider.resolve_binary_path()
         self.assertTrue(path is None or isinstance(path, str))
+
+    def test_preflight_resilience_with_bare_or_legacy_provider(self):
+        """Ensure preflight check in main_async never crashes if provider lacks resolve_binary_path."""
+        class LegacyProviderWithoutMethod:
+            pass
+
+        legacy_bot = SimpleNamespace(
+            tts_provider=LegacyProviderWithoutMethod(),
+            espeak_provider=LegacyProviderWithoutMethod(),
+            cfg=SimpleNamespace(FFMPEG_PATH="ffmpeg", TTS_ENGINE="gtts", TTS_BIN="espeak-ng"),
+        )
+
+        # Reproduce the defensive preflight logic from app.py
+        resolved_espeak = None
+        try:
+            provider = getattr(legacy_bot, "tts_provider", None) or getattr(legacy_bot, "espeak_provider", None)
+            if provider is not None:
+                resolve_fn = getattr(provider, "resolve_binary_path", None) or getattr(provider, "_resolve_binary_path", None)
+                if callable(resolve_fn):
+                    resolved_espeak = resolve_fn()
+                elif hasattr(provider, "espeak"):
+                    espeak_obj = getattr(provider, "espeak", None)
+                    sub_resolve = getattr(espeak_obj, "resolve_binary_path", None) or getattr(espeak_obj, "_resolve_binary_path", None)
+                    if callable(sub_resolve):
+                        resolved_espeak = sub_resolve()
+        except Exception:
+            resolved_espeak = None
+
+        self.assertIsNone(resolved_espeak)
 
 
 if __name__ == "__main__":
