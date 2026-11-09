@@ -119,8 +119,8 @@ async _serialize(guildId, task) {
 ```
 
 ### 4.2 Lifecycle Transitions
-1. **Same-Channel Joins**: If `/tts join` is executed for a voice channel where an active, healthy session already exists, the bot retains the existing connection and returns `{ reused: true }`.
-2. **Channel Switches**: If the bot is already connected to Channel A and `/tts join` is invoked in Channel B, the old session is destroyed cleanly (purging old queue and connection) before opening Channel B.
+1. **Same-Channel Joins**: If `/join` is executed for a voice channel where an active, healthy session already exists, the bot retains the existing connection and returns `{ reused: true }`.
+2. **Channel Switches**: If the bot is already connected to Channel A and `/join` is invoked in Channel B, the old session is destroyed cleanly (purging old queue and connection) before opening Channel B.
 3. **Transient Disconnect Grace**: Network jitter or Discord server migrations trigger `VoiceConnectionStatus.Disconnected`. A grace timer (`VOICE_DISCONNECT_GRACE_MS`, default 8000ms) permits automatic reconnection before destroying the session.
 
 ---

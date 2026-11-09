@@ -84,7 +84,7 @@ class VoiceBridgeBot(commands.Bot):
             try:
                 activity = discord.Activity(
                     type=discord.ActivityType.listening,
-                    name="/tts help | VoiceBridge",
+                    name="/status | VoiceBridge",
                 )
                 await self.change_presence(activity=activity)
             except Exception:

@@ -8,16 +8,16 @@ An independent Discord text-to-speech bot written in Python. It reads messages f
 
 | Command | Description |
 | :--- | :--- |
-| `/tts setup` | Choose the one text channel that should be read aloud (*Manage Server permission required*). |
-| `/tts join` | Join the voice channel you are currently in. |
-| `/tts leave` | Leave voice and discard current and pending speech. |
-| `/tts voice` | Select an eSpeak voice variant for yourself, or set the server default. |
-| `/tts language` | Select the speech language for yourself, or set the server default. |
-| `/tts queue` | Inspect the current message and waiting queue. |
-| `/tts skip` | Cancel only the current message; the next waiting item starts. |
-| `/tts stop` | Cancel current speech and discard all waiting items. |
-| `/tts clear` | Discard waiting items without interrupting current speech. |
-| `/tts status` | Show the configured text channel, voice connection, and server default. |
+| `/setup` | Choose the one text channel that should be read aloud (*Manage Server permission required*). |
+| `/join` | Join the voice channel you are currently in. |
+| `/leave` | Leave voice and discard current and pending speech. |
+| `/voice` | Select an eSpeak voice variant for yourself, or set the server default. |
+| `/language` | Select the speech language for yourself, or set the server default. |
+| `/queue` | Inspect the current message and waiting queue. |
+| `/skip` | Cancel only the current message; the next waiting item starts. |
+| `/stop` | Cancel current speech and discard all waiting items. |
+| `/clear` | Discard waiting items without interrupting current speech. |
+| `/status` | Show the configured text channel, voice connection, and server default. |
 
 ### Preferences & Overrides
 Personal preferences override server defaults **field by field**. For example, a user can keep the server's default voice variant while choosing a personal language.
@@ -25,7 +25,7 @@ Personal preferences override server defaults **field by field**. For example, a
 ### Message Processing Rules
 Messages are only enqueued when **all** of these are true:
 1. They are normal user messages in a server (bot messages, webhooks, and DMs are ignored).
-2. The server has configured the message's channel with `/tts setup`.
+2. The server has configured the message's channel with `/setup`.
 3. The bot is actively connected to voice in that server.
 
 Empty messages and messages that become empty after sanitization (e.g. standalone URLs or emojis) are ignored. The default behavior prefixes the speaker's display name (`Alice says: ...`); set `SPEAK_USERNAMES=false` in `.env` to turn that off.
@@ -184,10 +184,10 @@ espeak-ng --version
 The bot will automatically create the SQLite database and `data/` directory.
 
 ### Quick Discord Usage
-1. A server manager runs `/tts setup` in the desired text channel (or specifies one).
-2. Users join a voice channel and run `/tts join`.
+1. A server manager runs `/setup` in the desired text channel (or specifies one).
+2. Users join a voice channel and run `/join`.
 3. Any message typed into the configured text channel will be spoken in the voice channel.
-4. When finished, run `/tts leave`.
+4. When finished, run `/leave`.
 
 ---
 

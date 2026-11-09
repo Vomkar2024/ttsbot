@@ -1,23 +1,23 @@
-"""Discord slash command group for VoiceBridge TTS."""
+"""Discord slash commands for VoiceBridge TTS."""
 
-from typing import Optional
+from typing import List, Optional
 
 import discord
 from discord import app_commands
 
 from ..constants import (
+    COMMAND_CLEAR,
+    COMMAND_JOIN,
+    COMMAND_LANGUAGE,
+    COMMAND_LEAVE,
+    COMMAND_QUEUE,
+    COMMAND_SETUP,
+    COMMAND_SKIP,
+    COMMAND_STATUS,
+    COMMAND_STOP,
     COMMAND_TTS,
+    COMMAND_VOICE,
     LANGUAGE_CHOICES,
-    SUBCOMMAND_CLEAR,
-    SUBCOMMAND_JOIN,
-    SUBCOMMAND_LANGUAGE,
-    SUBCOMMAND_LEAVE,
-    SUBCOMMAND_QUEUE,
-    SUBCOMMAND_SETUP,
-    SUBCOMMAND_SKIP,
-    SUBCOMMAND_STATUS,
-    SUBCOMMAND_STOP,
-    SUBCOMMAND_VOICE,
     VOICE_VARIANT_CHOICES,
 )
 from ..storage.settings_store import SettingsStore
@@ -34,34 +34,32 @@ VOICE_APP_CHOICES = [
 ]
 
 
-class TtsCommandGroup(app_commands.Group):
-    def __init__(
-        self,
-        session_manager: VoiceSessionManager,
-        settings_store: SettingsStore,
-    ):
-        super().__init__(
-            name=COMMAND_TTS,
-            description="VoiceBridge local text-to-speech bot controls and preferences",
-        )
-        self.session_manager = session_manager
-        self.settings_store = settings_store
+class TtsCommandGroup:
+    """Deprecated: commands are now top-level slash commands without the /tts prefix."""
+    pass
 
-    @app_commands.command(
-        name=SUBCOMMAND_SETUP,
+
+def setup_tts_commands(
+    tree: app_commands.CommandTree,
+    session_manager: VoiceSessionManager,
+    settings_store: SettingsStore,
+) -> List[app_commands.Command]:
+    """Registers all VoiceBridge slash commands as top-level application commands."""
+
+    @tree.command(
+        name=COMMAND_SETUP,
         description="Choose the text channel that should be read aloud (Manage Server required)",
     )
     @app_commands.describe(
         channel="The text channel to read aloud (defaults to current channel)"
     )
     async def setup(
-        self,
         interaction: discord.Interaction,
         channel: Optional[discord.TextChannel] = None,
     ) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
-                "The `/tts` command can only be used in a Discord server.",
+                "This command can only be used in a Discord server.",
                 ephemeral=True,
             )
             return
@@ -74,20 +72,20 @@ class TtsCommandGroup(app_commands.Group):
             return
 
         target_channel = channel or interaction.channel
-        self.settings_store.set_configured_channel(str(interaction.guild.id), str(target_channel.id))
+        settings_store.set_configured_channel(str(interaction.guild.id), str(target_channel.id))
 
         await interaction.response.send_message(
             f"✅ Designated <#{target_channel.id}> as the text channel to be read aloud."
         )
 
-    @app_commands.command(
-        name=SUBCOMMAND_JOIN,
+    @tree.command(
+        name=COMMAND_JOIN,
         description="Join the voice channel you are currently in",
     )
-    async def join(self, interaction: discord.Interaction) -> None:
+    async def join(interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
-                "The `/tts` command can only be used in a Discord server.",
+                "This command can only be used in a Discord server.",
                 ephemeral=True,
             )
             return
@@ -100,19 +98,19 @@ class TtsCommandGroup(app_commands.Group):
 
         if not voice_channel:
             await interaction.followup.send(
-                "❌ You must be connected to a voice channel to use `/tts join`."
+                "❌ You must be connected to a voice channel to use `/join`."
             )
             return
 
         try:
-            result = await self.session_manager.join(interaction.guild, voice_channel)
+            result = await session_manager.join(interaction.guild, voice_channel)
             reused = result.get("reused", False)
-            configured_channel_id = self.settings_store.get_configured_channel(str(interaction.guild.id))
+            configured_channel_id = settings_store.get_configured_channel(str(interaction.guild.id))
 
             channel_note = (
                 f"\nReading messages from <#{configured_channel_id}>."
                 if configured_channel_id
-                else "\n⚠️ No text channel configured yet! Run `/tts setup` to select one."
+                else "\n⚠️ No text channel configured yet! Run `/setup` to select one."
             )
 
             if reused:
@@ -126,20 +124,20 @@ class TtsCommandGroup(app_commands.Group):
         except Exception as err:
             await interaction.followup.send(f"❌ Could not join voice channel: {err}")
 
-    @app_commands.command(
-        name=SUBCOMMAND_LEAVE,
+    @tree.command(
+        name=COMMAND_LEAVE,
         description="Leave voice and discard current and pending speech",
     )
-    async def leave(self, interaction: discord.Interaction) -> None:
+    async def leave(interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
-                "The `/tts` command can only be used in a Discord server.",
+                "This command can only be used in a Discord server.",
                 ephemeral=True,
             )
             return
 
         await interaction.response.defer()
-        left = await self.session_manager.leave(str(interaction.guild.id))
+        left = await session_manager.leave(str(interaction.guild.id))
         if left:
             await interaction.followup.send(
                 "👋 Left the voice channel and discarded current and pending speech."
@@ -149,8 +147,8 @@ class TtsCommandGroup(app_commands.Group):
                 "ℹ️ The bot is not currently connected to voice in this server."
             )
 
-    @app_commands.command(
-        name=SUBCOMMAND_VOICE,
+    @tree.command(
+        name=COMMAND_VOICE,
         description="Select an eSpeak voice variant for yourself, or set the server default",
     )
     @app_commands.describe(
@@ -159,14 +157,13 @@ class TtsCommandGroup(app_commands.Group):
     )
     @app_commands.choices(variant=VOICE_APP_CHOICES)
     async def voice(
-        self,
         interaction: discord.Interaction,
         variant: str,
         server: Optional[bool] = False,
     ) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
-                "The `/tts` command can only be used in a Discord server.",
+                "This command can only be used in a Discord server.",
                 ephemeral=True,
             )
             return
@@ -182,20 +179,20 @@ class TtsCommandGroup(app_commands.Group):
                 )
                 return
 
-            self.settings_store.set_guild_defaults(guild_id, voice=variant)
+            settings_store.set_guild_defaults(guild_id, voice=variant)
             await interaction.response.send_message(
                 f"✅ Updated server default voice variant to `{variant}`."
             )
             return
 
-        self.settings_store.set_user_preferences(guild_id, user_id, voice=variant)
+        settings_store.set_user_preferences(guild_id, user_id, voice=variant)
         await interaction.response.send_message(
             f"✅ Updated your personal voice variant override to `{variant}`.",
             ephemeral=True,
         )
 
-    @app_commands.command(
-        name=SUBCOMMAND_LANGUAGE,
+    @tree.command(
+        name=COMMAND_LANGUAGE,
         description="Select the speech language for yourself, or set the server default",
     )
     @app_commands.describe(
@@ -204,14 +201,13 @@ class TtsCommandGroup(app_commands.Group):
     )
     @app_commands.choices(language=LANG_APP_CHOICES)
     async def language(
-        self,
         interaction: discord.Interaction,
         language: str,
         server: Optional[bool] = False,
     ) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
-                "The `/tts` command can only be used in a Discord server.",
+                "This command can only be used in a Discord server.",
                 ephemeral=True,
             )
             return
@@ -227,31 +223,31 @@ class TtsCommandGroup(app_commands.Group):
                 )
                 return
 
-            self.settings_store.set_guild_defaults(guild_id, language=language)
+            settings_store.set_guild_defaults(guild_id, language=language)
             await interaction.response.send_message(
                 f"✅ Updated server default speech language to `{language}`."
             )
             return
 
-        self.settings_store.set_user_preferences(guild_id, user_id, language=language)
+        settings_store.set_user_preferences(guild_id, user_id, language=language)
         await interaction.response.send_message(
             f"✅ Updated your personal speech language override to `{language}`.",
             ephemeral=True,
         )
 
-    @app_commands.command(
-        name=SUBCOMMAND_QUEUE,
+    @tree.command(
+        name=COMMAND_QUEUE,
         description="Inspect the current message and waiting queue",
     )
-    async def queue(self, interaction: discord.Interaction) -> None:
+    async def queue(interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
-                "The `/tts` command can only be used in a Discord server.",
+                "This command can only be used in a Discord server.",
                 ephemeral=True,
             )
             return
 
-        session = self.session_manager.get_session(str(interaction.guild.id))
+        session = session_manager.get_session(str(interaction.guild.id))
         if not session:
             await interaction.response.send_message(
                 "❌ The bot is not currently connected to voice in this server.",
@@ -299,19 +295,19 @@ class TtsCommandGroup(app_commands.Group):
 
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(
-        name=SUBCOMMAND_SKIP,
+    @tree.command(
+        name=COMMAND_SKIP,
         description="Cancel only the current message; the next waiting item starts",
     )
-    async def skip(self, interaction: discord.Interaction) -> None:
+    async def skip(interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
-                "The `/tts` command can only be used in a Discord server.",
+                "This command can only be used in a Discord server.",
                 ephemeral=True,
             )
             return
 
-        session = self.session_manager.get_session(str(interaction.guild.id))
+        session = session_manager.get_session(str(interaction.guild.id))
         if not session:
             await interaction.response.send_message(
                 "❌ The bot is not currently connected to voice in this server.",
@@ -329,19 +325,19 @@ class TtsCommandGroup(app_commands.Group):
                 "ℹ️ No message is currently speaking to skip."
             )
 
-    @app_commands.command(
-        name=SUBCOMMAND_STOP,
+    @tree.command(
+        name=COMMAND_STOP,
         description="Cancel current speech and discard all waiting items",
     )
-    async def stop(self, interaction: discord.Interaction) -> None:
+    async def stop(interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
-                "The `/tts` command can only be used in a Discord server.",
+                "This command can only be used in a Discord server.",
                 ephemeral=True,
             )
             return
 
-        session = self.session_manager.get_session(str(interaction.guild.id))
+        session = session_manager.get_session(str(interaction.guild.id))
         if not session:
             await interaction.response.send_message(
                 "❌ The bot is not currently connected to voice in this server.",
@@ -355,19 +351,19 @@ class TtsCommandGroup(app_commands.Group):
             f"⏹️ Cancelled current speech and discarded {dropped} waiting item(s)."
         )
 
-    @app_commands.command(
-        name=SUBCOMMAND_CLEAR,
+    @tree.command(
+        name=COMMAND_CLEAR,
         description="Discard waiting items without interrupting current speech",
     )
-    async def clear(self, interaction: discord.Interaction) -> None:
+    async def clear(interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
-                "The `/tts` command can only be used in a Discord server.",
+                "This command can only be used in a Discord server.",
                 ephemeral=True,
             )
             return
 
-        session = self.session_manager.get_session(str(interaction.guild.id))
+        session = session_manager.get_session(str(interaction.guild.id))
         if not session:
             await interaction.response.send_message(
                 "❌ The bot is not currently connected to voice in this server.",
@@ -383,14 +379,14 @@ class TtsCommandGroup(app_commands.Group):
             f"🧹 Discarded {cleared} waiting item(s).{suffix}"
         )
 
-    @app_commands.command(
-        name=SUBCOMMAND_STATUS,
+    @tree.command(
+        name=COMMAND_STATUS,
         description="Show configured text channel, voice connection, and server default",
     )
-    async def status(self, interaction: discord.Interaction) -> None:
+    async def status(interaction: discord.Interaction) -> None:
         if not interaction.guild:
             await interaction.response.send_message(
-                "The `/tts` command can only be used in a Discord server.",
+                "This command can only be used in a Discord server.",
                 ephemeral=True,
             )
             return
@@ -398,11 +394,11 @@ class TtsCommandGroup(app_commands.Group):
         guild_id = str(interaction.guild.id)
         user_id = str(interaction.user.id)
 
-        session = self.session_manager.get_session(guild_id)
-        configured_channel_id = self.settings_store.get_configured_channel(guild_id)
-        guild_defaults = self.settings_store.get_guild_settings(guild_id)
-        user_prefs = self.settings_store.get_user_preferences(guild_id, user_id)
-        effective = self.settings_store.resolve_preferences(guild_id, user_id)
+        session = session_manager.get_session(guild_id)
+        configured_channel_id = settings_store.get_configured_channel(guild_id)
+        guild_defaults = settings_store.get_guild_settings(guild_id)
+        user_prefs = settings_store.get_user_preferences(guild_id, user_id)
+        effective = settings_store.resolve_preferences(guild_id, user_id)
 
         embed = discord.Embed(
             title="🎙️ VoiceBridge TTS Status",
@@ -411,13 +407,13 @@ class TtsCommandGroup(app_commands.Group):
 
         embed.add_field(
             name="Voice Connection",
-            value=f"🟢 Connected in <#{session.channel_id}>" if session else "🔴 Disconnected (`/tts join`)",
+            value=f"🟢 Connected in <#{session.channel_id}>" if session else "🔴 Disconnected (`/join`)",
             inline=True,
         )
 
         embed.add_field(
             name="Configured Text Channel",
-            value=f"<#{configured_channel_id}>" if configured_channel_id else "⚠️ *None configured (`/tts setup`)*",
+            value=f"<#{configured_channel_id}>" if configured_channel_id else "⚠️ *None configured (`/setup`)*",
             inline=True,
         )
 
@@ -445,16 +441,18 @@ class TtsCommandGroup(app_commands.Group):
 
         await interaction.response.send_message(embed=embed)
 
-
-def setup_tts_commands(
-    tree: app_commands.CommandTree,
-    session_manager: VoiceSessionManager,
-    settings_store: SettingsStore,
-) -> TtsCommandGroup:
-    group = TtsCommandGroup(session_manager=session_manager, settings_store=settings_store)
-    tree.add_command(group)
-    return group
+    return [
+        setup,
+        join,
+        leave,
+        voice,
+        language,
+        queue,
+        skip,
+        stop,
+        clear,
+        status,
+    ]
 
 
 __all__ = ["setup_tts_commands", "TtsCommandGroup"]
-
