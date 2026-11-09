@@ -56,7 +56,12 @@ class EspeakProvider:
         found = shutil.which(self.tts_bin)
         if found:
             return found
-        if sys.platform == "win32":
+        if sys.platform == "win32" and self.tts_bin.lower() in (
+            "espeak-ng",
+            "espeak-ng.exe",
+            "espeak",
+            "espeak.exe",
+        ):
             candidates = [
                 r"C:\Program Files\eSpeak NG\espeak-ng.exe",
                 r"C:\Program Files (x86)\eSpeak NG\espeak-ng.exe",

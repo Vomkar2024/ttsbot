@@ -55,6 +55,13 @@ class DiscordVoiceSession:
             raise AbortError("Job aborted before start")
 
         text_to_speak = job.spoken_text or job.text
+        logger.info(
+            "[VoiceSession Guild %s] Synthesizing speech: '%s' (lang=%s, voice=%s)",
+            self.guild_id,
+            text_to_speak,
+            job.language,
+            job.voice,
+        )
 
         # 1. Synthesize audio buffer via eSpeak NG
         wav_bytes = await self.espeak_provider.synthesize(
@@ -66,6 +73,12 @@ class DiscordVoiceSession:
 
         if cancel_event.is_set():
             raise AbortError("Job aborted after synthesis")
+
+        logger.info(
+            "[VoiceSession Guild %s] Synthesis complete (%d bytes). Starting Discord playback...",
+            self.guild_id,
+            len(wav_bytes),
+        )
 
         # 2. Play audio stream through VoiceClient
         if not self.voice_client or not self.voice_client.is_connected():

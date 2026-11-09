@@ -65,6 +65,11 @@ async def handle_message_create(
         return False
     session = sm.get_session(guild_id) if hasattr(sm, "get_session") else sm.getSession(guild_id)
     if not session:
+        logger.info(
+            "[MessageCreate Guild %s] Ignored message from %s: bot is not in a voice channel. Run /join first.",
+            guild_id,
+            getattr(author, "display_name", getattr(author, "name", author)),
+        )
         return False
 
     # 4. Verify message came from the active voice channel's text chat OR the configured TTS channel
@@ -87,6 +92,15 @@ async def handle_message_create(
         )
 
     if not is_voice_channel_chat and not is_configured:
+        logger.info(
+            "[MessageCreate Guild %s] Ignored message from %s in channel #%s (ID: %s). "
+            "It is neither the active voice channel text chat (%s) nor configured with /setup.",
+            guild_id,
+            getattr(author, "display_name", getattr(author, "name", author)),
+            getattr(channel, "name", channel_id),
+            channel_id,
+            session_channel_id or "none",
+        )
         return False
 
     # 5. Clean, format, and truncate message text
@@ -104,6 +118,25 @@ async def handle_message_create(
     )
 
     if not formatted:
+        content = (
+            getattr(message, "content", "")
+            if not isinstance(message, dict)
+            else message.get("content", "")
+        )
+        if not content and not (
+            getattr(message, "clean_content", "") if not isinstance(message, dict) else ""
+        ):
+            logger.warning(
+                "[MessageCreate Guild %s] Message content is empty! "
+                "Ensure 'Message Content Intent' is enabled in the Discord Developer Portal under Bot -> Privileged Gateway Intents.",
+                guild_id,
+            )
+        else:
+            logger.info(
+                "[MessageCreate Guild %s] Message from %s cleaned down to empty text (e.g. standalone emoji/URL) and was skipped.",
+                guild_id,
+                getattr(author, "display_name", getattr(author, "name", author)),
+            )
         return False
 
     # 6. Resolve personal vs server speech preferences
@@ -140,6 +173,14 @@ async def handle_message_create(
                 "language": language,
                 "voice": voice,
             }
+        )
+        logger.info(
+            "[MessageCreate Guild %s] Enqueued speech for %s: '%s' (lang=%s, voice=%s)",
+            guild_id,
+            formatted.author_name,
+            formatted.spoken_text,
+            language,
+            voice,
         )
         return True
     except QueueFullError:
