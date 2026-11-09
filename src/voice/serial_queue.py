@@ -1,6 +1,7 @@
 """Sequential FIFO processing queue with bounds enforcement and job cancellation."""
 
 import asyncio
+import inspect
 import logging
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -274,7 +275,7 @@ class SerialQueue:
                 try:
                     if self.on_process_job:
                         res = self.on_process_job(self.current_job, self.current_cancel_event)
-                        if asyncio.iscoroutine(res):
+                        if inspect.isawaitable(res):
                             await res
                     self.current_job.resolve()
                 except Exception as err:

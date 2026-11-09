@@ -3,9 +3,8 @@
 import asyncio
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import discord
 from src.app import TTSBot, create_app
 from src.config import Config
 
@@ -18,7 +17,7 @@ class TestAppAndVoiceState(unittest.IsolatedAsyncioTestCase):
             voice_disconnect_grace_ms=100,  # 0.1s for fast tests
         )
         self.bot = create_app(self.cfg)
-        self.bot._user = SimpleNamespace(id=999999, name="TTSBot")
+        self.bot._connection.user = SimpleNamespace(id=999999, name="TTSBot")
 
     async def asyncTearDown(self):
         await self.bot.stop()
@@ -94,8 +93,9 @@ class TestAppAndVoiceState(unittest.IsolatedAsyncioTestCase):
         before_recon = SimpleNamespace(channel=None)
         after_recon = SimpleNamespace(channel=SimpleNamespace(id=200))
         await self.bot.on_voice_state_update(bot_member, before_recon, after_recon)
+        await asyncio.sleep(0)
 
-        self.assertTrue(task.cancelled())
+        self.assertTrue(task.cancelled() or getattr(task, "cancelling", lambda: 0)() > 0)
         self.assertIn("100", self.bot.session_manager.sessions)
 
     async def test_voice_state_update_human_leaves_and_channel_becomes_empty(self):

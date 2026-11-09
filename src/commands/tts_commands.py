@@ -532,4 +532,12 @@ class TTSCommandsCog(commands.Cog, name="TTS"):
         self.commands = setup_tts_commands(self.bot.tree, session_manager, settings_store)
 
 
-__all__ = ["setup_tts_commands", "TtsCommandGroup", "TTSCommandsCog"]
+async def setup(bot: commands.Bot) -> None:
+    """Extension setup entrypoint for discord.py bot.load_extension."""
+    session_manager = getattr(bot, "session_manager", None)
+    settings_store = getattr(bot, "settings_store", None)
+    if session_manager and settings_store:
+        await bot.add_cog(TTSCommandsCog(bot, session_manager, settings_store))
+
+
+__all__ = ["setup_tts_commands", "TtsCommandGroup", "TTSCommandsCog", "setup"]

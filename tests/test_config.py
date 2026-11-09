@@ -2,7 +2,6 @@
 
 import unittest
 from src.config import (
-    Config,
     _clean_str,
     _extract_app_id_from_token,
     _parse_bool,

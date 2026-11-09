@@ -1,6 +1,7 @@
 """Voice session manager handling per-guild concurrency serialization, channel moves, and lifecycle."""
 
 import asyncio
+import inspect
 import logging
 from typing import Any, Dict, Optional
 
@@ -63,7 +64,7 @@ class VoiceSessionManager:
         lock = self._get_guild_lock(guild_id)
         async with lock:
             res = coro_func()
-            if asyncio.iscoroutine(res):
+            if inspect.isawaitable(res):
                 return await res
             return res
 
@@ -114,7 +115,7 @@ class VoiceSessionManager:
             if not me and hasattr(guild, "members") and hasattr(guild.members, "fetchMe"):
                 try:
                     res = guild.members.fetchMe()
-                    if asyncio.iscoroutine(res):
+                    if inspect.isawaitable(res):
                         me = await res
                     else:
                         me = res
@@ -183,7 +184,7 @@ class VoiceSessionManager:
                 try:
                     if hasattr(existing_vc, "move_to"):
                         res = existing_vc.move_to(voice_channel)
-                        if asyncio.iscoroutine(res):
+                        if inspect.isawaitable(res):
                             await res
                     if existing:
                         existing.channel_id = str(voice_channel.id)
@@ -218,7 +219,7 @@ class VoiceSessionManager:
                         timeout=self.ready_timeout_sec,
                         reconnect=True,
                     )
-                    if asyncio.iscoroutine(conn_res):
+                    if inspect.isawaitable(conn_res):
                         voice_client = await conn_res
                     else:
                         voice_client = conn_res

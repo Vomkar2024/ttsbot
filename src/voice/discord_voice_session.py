@@ -114,41 +114,43 @@ class DiscordVoiceSession:
             )
             raise e
 
-        # Stop any previous lingering audio on voice client
-        if self.voice_client.is_playing() or self.voice_client.is_paused():
-            self.voice_client.stop()
-
         try:
-            self.voice_client.play(audio_source, after=_after_play)
-        except Exception as e:
+            # Stop any previous lingering audio on voice client
+            if self.voice_client.is_playing() or self.voice_client.is_paused():
+                self.voice_client.stop()
+
+            try:
+                self.voice_client.play(audio_source, after=_after_play)
+            except Exception as e:
+                raise e
+
+            # Wait for either completion or cancellation
+            cancel_waiter = loop.create_task(cancel_event.wait())
+            finish_waiter = loop.create_task(play_finished.wait())
+
+            done, pending = await asyncio.wait(
+                [cancel_waiter, finish_waiter],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in pending:
+                task.cancel()
+
+            if cancel_event.is_set():
+                try:
+                    if self.voice_client and (self.voice_client.is_playing() or self.voice_client.is_paused()):
+                        self.voice_client.stop()
+                except Exception:
+                    pass
+                raise AbortError("Playback cancelled by user")
+
+            if play_error:
+                raise play_error
+        finally:
             try:
                 audio_source.cleanup()
             except Exception:
                 pass
-            raise e
-
-        # Wait for either completion or cancellation
-        cancel_waiter = loop.create_task(cancel_event.wait())
-        finish_waiter = loop.create_task(play_finished.wait())
-
-        done, pending = await asyncio.wait(
-            [cancel_waiter, finish_waiter],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-
-        for task in pending:
-            task.cancel()
-
-        if cancel_event.is_set():
-            try:
-                if self.voice_client and self.voice_client.is_playing():
-                    self.voice_client.stop()
-            except Exception:
-                pass
-            raise AbortError("Playback cancelled by user")
-
-        if play_error:
-            raise play_error
 
     async def destroy_async(self) -> None:
         """Closes player, drops queue, and disconnects the voice client."""

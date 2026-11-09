@@ -1,9 +1,7 @@
 """Tests for Discord slash commands registration and parameter configuration."""
 
 import unittest
-from unittest.mock import AsyncMock, MagicMock
 import discord
-from discord import app_commands
 from discord.ext import commands
 
 from src.commands.tts_commands import setup_tts_commands

@@ -9,7 +9,7 @@ from typing import Optional
 import discord
 from discord.ext import commands
 
-from .commands.tts_commands import setup_tts_commands
+from .commands.tts_commands import TTSCommandsCog
 from .config import Config, default_config
 from .events.message_handler import handle_message_create
 from .storage.settings_store import SettingsStore
@@ -72,10 +72,12 @@ class TTSBot(commands.Bot):
         }
 
     async def setup_hook(self) -> None:
-        setup_tts_commands(
-            self.tree,
-            session_manager=self.session_manager,
-            settings_store=self.settings_store,
+        await self.add_cog(
+            TTSCommandsCog(
+                self,
+                session_manager=self.session_manager,
+                settings_store=self.settings_store,
+            )
         )
 
         # Sync commands if token is present
@@ -184,11 +186,17 @@ class TTSBot(commands.Bot):
         logger.info("[TTS] Shutting down gracefully...")
         try:
             if hasattr(self.session_manager, "destroy_all_async"):
-                await self.session_manager.destroy_all_async()
+                try:
+                    await asyncio.wait_for(self.session_manager.destroy_all_async(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.warning("[TTS] Voice session cleanup timed out during shutdown.")
             else:
                 self.session_manager.destroy_all()
             self.settings_store.close()
-            await self.close()
+            try:
+                await asyncio.wait_for(self.close(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("[TTS] Bot close timed out during shutdown.")
             logger.info("[TTS] Cleanup complete.")
         except Exception as err:
             logger.error("[TTS] Error during shutdown: %s", err)
