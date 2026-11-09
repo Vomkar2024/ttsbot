@@ -64,32 +64,41 @@ class EspeakProvider:
             return found
 
         # 3. Cross-platform fallback:
-        # If specified binary path was not directly found, check standard names on PATH
-        for alt_name in ("espeak-ng", "espeak"):
-            found_alt = shutil.which(alt_name)
-            if found_alt:
-                return found_alt
+        # Only fall back to alternative names or standard OS paths if tts_bin is
+        # the default ('espeak-ng' / 'espeak') or if an eSpeak path was specified that wasn't found directly.
+        bin_name = Path(self.tts_bin).name.lower()
+        is_windows_path = "\\" in self.tts_bin or ":" in self.tts_bin
+        is_default_or_generic = (
+            self.tts_bin.lower() in ("espeak-ng", "espeak-ng.exe", "espeak", "espeak.exe")
+            or bin_name in ("espeak-ng", "espeak-ng.exe", "espeak", "espeak.exe")
+        )
 
-        # 4. OS-specific standard installation directories
-        if sys.platform == "win32":
-            candidates = [
-                r"C:\Program Files\eSpeak NG\espeak-ng.exe",
-                r"C:\Program Files (x86)\eSpeak NG\espeak-ng.exe",
-            ]
-            for candidate in candidates:
-                if Path(candidate).is_file():
-                    return candidate
-        else:
-            # Standard Linux / Unix package paths
-            candidates = [
-                "/usr/bin/espeak-ng",
-                "/usr/bin/espeak",
-                "/usr/local/bin/espeak-ng",
-                "/usr/local/bin/espeak",
-            ]
-            for candidate in candidates:
-                if Path(candidate).is_file():
-                    return candidate
+        if is_windows_path or is_default_or_generic:
+            for alt_name in ("espeak-ng", "espeak"):
+                found_alt = shutil.which(alt_name)
+                if found_alt:
+                    return found_alt
+
+            # 4. OS-specific standard installation directories
+            if sys.platform == "win32":
+                candidates = [
+                    r"C:\Program Files\eSpeak NG\espeak-ng.exe",
+                    r"C:\Program Files (x86)\eSpeak NG\espeak-ng.exe",
+                ]
+                for candidate in candidates:
+                    if Path(candidate).is_file():
+                        return candidate
+            else:
+                # Standard Linux / Unix package paths
+                candidates = [
+                    "/usr/bin/espeak-ng",
+                    "/usr/bin/espeak",
+                    "/usr/local/bin/espeak-ng",
+                    "/usr/local/bin/espeak",
+                ]
+                for candidate in candidates:
+                    if Path(candidate).is_file():
+                        return candidate
 
         return None
 
@@ -209,7 +218,13 @@ class EspeakProvider:
             watcher_task = None
 
         try:
-            stdout_data, stderr_data = await communicate_task
+            stdout_data, stderr_data = await asyncio.wait_for(communicate_task, timeout=15.0)
+        except asyncio.TimeoutError:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            raise RuntimeError(f"eSpeak process timed out after 15 seconds")
         except asyncio.CancelledError:
             try:
                 proc.terminate()

@@ -77,6 +77,26 @@ class TestUnifiedAndGTTS(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(res, bytes)
             self.assertEqual(res[0:4], b"RIFF")
 
+    def test_unified_provider_binary_path_resolution(self):
+        unified = UnifiedTTSProvider(default_engine="gtts", tts_bin="custom-bin")
+        self.assertEqual(unified.tts_bin, "custom-bin")
+
+        with patch.object(unified.espeak, "resolve_binary_path", return_value="/mock/bin/espeak"):
+            self.assertEqual(unified.resolve_binary_path(), "/mock/bin/espeak")
+            self.assertEqual(unified._resolve_binary_path(), "/mock/bin/espeak")
+
+    def test_app_create_app_preflight_attributes(self):
+        from src.app import create_app
+        from src.config import Config
+
+        cfg = Config(discord_token="fake.token.123", tts_engine="gtts")
+        bot = create_app(app_config=cfg)
+        self.assertTrue(hasattr(bot.tts_provider, "resolve_binary_path"))
+        self.assertTrue(hasattr(bot.espeak_provider, "resolve_binary_path"))
+        # Must execute without AttributeError
+        path = bot.tts_provider.resolve_binary_path()
+        self.assertTrue(path is None or isinstance(path, str))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,17 @@ class UnifiedTTSProvider:
             allow_mock_fallback=self.allow_mock_fallback,
         )
 
+    @property
+    def tts_bin(self) -> str:
+        """Configured eSpeak binary executable path."""
+        return self.espeak.tts_bin
+
+    def resolve_binary_path(self) -> Optional[str]:
+        """Resolves the underlying eSpeak binary path if available."""
+        return self.espeak.resolve_binary_path()
+
+    _resolve_binary_path = resolve_binary_path
+
     def resolve_voice_arg(
         self,
         language: Optional[str] = DEFAULT_LANGUAGE,

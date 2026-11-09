@@ -201,12 +201,17 @@ async def main_async() -> None:
 
     # Pre-flight system binary check (eSpeak NG & FFmpeg)
     import shutil
-    resolved_espeak = bot.espeak_provider.resolve_binary_path()
+    resolved_espeak = (
+        bot.tts_provider.resolve_binary_path()
+        if hasattr(bot.tts_provider, "resolve_binary_path")
+        else (getattr(bot, "espeak_provider", None) and getattr(bot.espeak_provider, "resolve_binary_path", lambda: None)())
+    )
     resolved_ffmpeg = shutil.which(bot.cfg.FFMPEG_PATH)
+    is_gtts_primary = (getattr(bot.cfg, "TTS_ENGINE", "gtts") or "").lower() in ("gtts", "google")
 
-    if not resolved_espeak or not resolved_ffmpeg:
+    if not resolved_ffmpeg or (not resolved_espeak and not is_gtts_primary):
         missing_binaries = []
-        if not resolved_espeak:
+        if not resolved_espeak and not is_gtts_primary:
             missing_binaries.append("eSpeak NG")
         if not resolved_ffmpeg:
             missing_binaries.append("FFmpeg")
@@ -240,6 +245,11 @@ async def main_async() -> None:
         full_warn = "\n".join(warn_lines)
         print(full_warn, file=sys.stderr, flush=True)
         logger.warning("System binaries missing: %s. TTS playback will fail until installed.", bin_str)
+    elif not resolved_espeak and is_gtts_primary:
+        logger.info(
+            "eSpeak NG binary not found on PATH. Primary TTS engine is 'gTTS' (natural web voice); "
+            "eSpeak offline fallback will be disabled."
+        )
 
     if not bot.cfg.DISCORD_TOKEN:
         err_msg = (
