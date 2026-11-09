@@ -64,37 +64,32 @@ class EspeakProvider:
             return found
 
         # 3. Cross-platform fallback:
-        # Only fall back to alternative names or standard OS paths if tts_bin is
-        # the default ('espeak-ng' / 'espeak') or if a Windows path was specified on Linux/macOS.
-        is_windows_path_on_unix = (sys.platform != "win32") and ("\\" in self.tts_bin or ":" in self.tts_bin)
-        is_default_or_generic = self.tts_bin.lower() in ("espeak-ng", "espeak-ng.exe", "espeak", "espeak.exe")
+        # If specified binary path was not directly found, check standard names on PATH
+        for alt_name in ("espeak-ng", "espeak"):
+            found_alt = shutil.which(alt_name)
+            if found_alt:
+                return found_alt
 
-        if is_windows_path_on_unix or is_default_or_generic:
-            for alt_name in ("espeak-ng", "espeak"):
-                found_alt = shutil.which(alt_name)
-                if found_alt:
-                    return found_alt
-
-            # 4. OS-specific standard installation directories
-            if sys.platform == "win32":
-                candidates = [
-                    r"C:\Program Files\eSpeak NG\espeak-ng.exe",
-                    r"C:\Program Files (x86)\eSpeak NG\espeak-ng.exe",
-                ]
-                for candidate in candidates:
-                    if Path(candidate).is_file():
-                        return candidate
-            else:
-                # Standard Linux / Unix package paths
-                candidates = [
-                    "/usr/bin/espeak-ng",
-                    "/usr/bin/espeak",
-                    "/usr/local/bin/espeak-ng",
-                    "/usr/local/bin/espeak",
-                ]
-                for candidate in candidates:
-                    if Path(candidate).is_file():
-                        return candidate
+        # 4. OS-specific standard installation directories
+        if sys.platform == "win32":
+            candidates = [
+                r"C:\Program Files\eSpeak NG\espeak-ng.exe",
+                r"C:\Program Files (x86)\eSpeak NG\espeak-ng.exe",
+            ]
+            for candidate in candidates:
+                if Path(candidate).is_file():
+                    return candidate
+        else:
+            # Standard Linux / Unix package paths
+            candidates = [
+                "/usr/bin/espeak-ng",
+                "/usr/bin/espeak",
+                "/usr/local/bin/espeak-ng",
+                "/usr/local/bin/espeak",
+            ]
+            for candidate in candidates:
+                if Path(candidate).is_file():
+                    return candidate
 
         return None
 

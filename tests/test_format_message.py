@@ -71,6 +71,56 @@ class TestFormatMessage(unittest.TestCase):
         self.assertIsNotNone(res2)
         self.assertEqual(res2.spoken_text, "dave_dev says: Username test")
 
+    def test_discord_tts_acronym_expansion(self):
+        from src.tts.format_message import parse_acronyms
+
+        self.assertEqual(parse_acronyms("iirc this is fine imo"), "if I recall correctly this is fine in my opinion")
+        self.assertEqual(parse_acronyms("brb, gtg rn!"), "be right back, got to go right now!")
+        self.assertEqual(parse_acronyms(":) :("), "smiley face sad face")
+
+    def test_discord_tts_repeated_chars_truncation(self):
+        from src.tts.format_message import remove_repeated_chars
+
+        self.assertEqual(remove_repeated_chars("helloooooooo", 3), "hellooo")
+        self.assertEqual(remove_repeated_chars("noooooo waaaay", 3), "nooo waaay")
+
+    def test_discord_tts_question_mark_converts_to_what(self):
+        res = format_message_for_tts({"content": "?"}, speak_usernames=False)
+        self.assertIsNotNone(res)
+        self.assertEqual(res.cleaned_text, "what")
+        self.assertEqual(res.spoken_text, "what")
+
+    def test_discord_tts_attachment_and_link_formatting(self):
+        from src.tts.format_message import attachments_to_format
+
+        self.assertEqual(attachments_to_format([{"filename": "screenshot.png"}]), "an image file")
+        self.assertEqual(attachments_to_format([{"filename": "song.mp3"}]), "an audio file")
+        self.assertEqual(attachments_to_format([{"filename": "clip.mp4"}]), "a video file")
+        self.assertEqual(attachments_to_format([{"filename": "doc.pdf"}]), "a text file")
+        self.assertEqual(attachments_to_format([{"filename": "a.png"}, {"filename": "b.png"}]), "multiple files")
+
+        msg = {
+            "content": "look at this https://example.com",
+            "attachments": [{"filename": "photo.jpg"}],
+            "member": {"displayName": "Alice"},
+        }
+        res = format_message_for_tts(msg, speak_usernames=True, announce_links=True)
+        self.assertIsNotNone(res)
+        self.assertEqual(res.spoken_text, "Alice sent a link, attached an image file, and said look at this")
+
+    def test_speaker_cooldown_tracker(self):
+        from src.tts.format_message import SpeakerCooldownTracker
+
+        tracker = SpeakerCooldownTracker(cooldown_sec=60)
+        # First message by Alice: should announce
+        self.assertTrue(tracker.should_announce_name("guild1", "user_alice"))
+        # Second message right after by Alice: should NOT announce
+        self.assertFalse(tracker.should_announce_name("guild1", "user_alice"))
+        # Message by Bob: should announce
+        self.assertTrue(tracker.should_announce_name("guild1", "user_bob"))
+        # Message by Alice again: should announce because Bob spoke
+        self.assertTrue(tracker.should_announce_name("guild1", "user_alice"))
+
 
 if __name__ == "__main__":
     unittest.main()

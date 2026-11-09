@@ -2,10 +2,53 @@
 
 DEFAULT_LANGUAGE = "en"
 DEFAULT_VOICE = "default"
+DEFAULT_TTS_ENGINE = "gtts"
+DEFAULT_SPEAKER_COOLDOWN_SEC = 60
 DEFAULT_MAX_QUEUE_SIZE = 50
 DEFAULT_MAX_MESSAGE_CHARS = 800
 DEFAULT_VOICE_READY_TIMEOUT_MS = 15000
 DEFAULT_VOICE_DISCONNECT_GRACE_MS = 8000
+
+TTS_ENGINE_CHOICES = [
+    {"name": "Google Translate TTS (Natural, recommended)", "value": "gtts"},
+    {"name": "eSpeak NG (Offline/Local)", "value": "espeak"},
+]
+
+# Common internet chat acronyms for speech expansion (matching Discord-TTS/Bot)
+ACRONYMS = {
+    "iirc": "if I recall correctly",
+    "afaik": "as far as I know",
+    "wdym": "what do you mean",
+    "imo": "in my opinion",
+    "brb": "be right back",
+    "wym": "what you mean",
+    "irl": "in real life",
+    "jk": "just kidding",
+    "btw": "by the way",
+    ":)": "smiley face",
+    ":(": "sad face",
+    "gtg": "got to go",
+    "rn": "right now",
+    "ig": "i guess",
+    "ppl": "people",
+    "rly": "really",
+    "cya": "see ya",
+    "ik": "i know",
+    "@": "at",
+    "™️": "tm",
+}
+
+# Attachment extension to speech format mapping (matching Discord-TTS/Bot)
+ATTACHMENT_EXTENSIONS = {
+    ("bmp", "gif", "ico", "png", "psd", "svg", "jpg", "jpeg", "webp"): "an image file",
+    ("mid", "midi", "mp3", "ogg", "wav", "wma", "m4a", "flac"): "an audio file",
+    ("avi", "mp4", "wmv", "m4v", "mpg", "mpeg", "webm", "mov", "mkv"): "a video file",
+    ("zip", "7z", "rar", "gz", "xz", "tar"): "a compressed file",
+    ("doc", "docx", "txt", "odt", "rtf", "pdf", "md"): "a text file",
+    ("bat", "sh", "jar", "py", "php", "js", "ts", "rs", "cpp", "c", "html", "css"): "a script file",
+    ("apk", "exe", "msi", "deb", "rpm"): "a program file",
+    ("dmg", "iso", "img", "ima"): "a disk image",
+}
 
 LANGUAGE_CHOICES = [
     {"name": "English (en)", "value": "en"},
@@ -30,6 +73,11 @@ LANGUAGE_CHOICES = [
 
 VOICE_VARIANT_CHOICES = [
     {"name": "Default voice", "value": "default"},
+    {"name": "US Natural (gTTS)", "value": "us"},
+    {"name": "UK Natural (gTTS)", "value": "uk"},
+    {"name": "Australia Natural (gTTS)", "value": "au"},
+    {"name": "India Natural (gTTS)", "value": "in"},
+    {"name": "Canada Natural (gTTS)", "value": "ca"},
     {"name": "Male 1 (+m1)", "value": "+m1"},
     {"name": "Male 2 (+m2)", "value": "+m2"},
     {"name": "Male 3 (+m3)", "value": "+m3"},

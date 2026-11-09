@@ -13,7 +13,8 @@ from .commands.tts_commands import setup_tts_commands
 from .config import Config, default_config
 from .events.message_handler import handle_message_create
 from .storage.settings_store import SettingsStore
-from .tts.espeak_provider import EspeakProvider
+from .tts.format_message import SpeakerCooldownTracker
+from .tts.unified_provider import UnifiedTTSProvider
 from .voice.session_manager import VoiceSessionManager
 
 logging.basicConfig(
@@ -40,9 +41,16 @@ class TTSBot(commands.Bot):
         )
 
         self.settings_store = SettingsStore(self.cfg.DATABASE_PATH)
-        self.espeak_provider = EspeakProvider(tts_bin=self.cfg.TTS_BIN)
+        self.tts_provider = UnifiedTTSProvider(
+            default_engine=self.cfg.TTS_ENGINE,
+            tts_bin=self.cfg.TTS_BIN,
+        )
+        self.espeak_provider = self.tts_provider  # Alias
+        self.speaker_cooldown_tracker = SpeakerCooldownTracker(
+            cooldown_sec=self.cfg.SPEAKER_COOLDOWN_SEC
+        )
         self.session_manager = VoiceSessionManager(
-            espeak_provider=self.espeak_provider,
+            tts_provider=self.tts_provider,
             ready_timeout_ms=self.cfg.VOICE_READY_TIMEOUT_MS,
             disconnect_grace_ms=self.cfg.VOICE_DISCONNECT_GRACE_MS,
             max_queue_size=self.cfg.MAX_QUEUE_SIZE,
@@ -52,11 +60,15 @@ class TTSBot(commands.Bot):
         self.context = {
             "settingsStore": self.settings_store,
             "sessionManager": self.session_manager,
-            "espeakProvider": self.espeak_provider,
+            "espeakProvider": self.tts_provider,
+            "ttsProvider": self.tts_provider,
+            "speakerCooldownTracker": self.speaker_cooldown_tracker,
             "config": self.cfg,
             "settings_store": self.settings_store,
             "session_manager": self.session_manager,
-            "espeak_provider": self.espeak_provider,
+            "espeak_provider": self.tts_provider,
+            "tts_provider": self.tts_provider,
+            "speaker_cooldown_tracker": self.speaker_cooldown_tracker,
         }
 
     async def setup_hook(self) -> None:
@@ -125,7 +137,7 @@ class TTSBot(commands.Bot):
         # Case 2: Human members leaving bot's channel
         if session.channel_id:
             channel = guild.get_channel(int(session.channel_id))
-            if channel and isinstance(channel, discord.VoiceChannel):
+            if channel and isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
                 human_members = [m for m in channel.members if not m.bot]
                 if len(human_members) == 0:
                     logger.info("[VoiceStateUpdate Guild %s] Voice channel is empty. Leaving.", guild.id)

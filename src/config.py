@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from .constants import (
     DEFAULT_LANGUAGE,
     DEFAULT_VOICE,
+    DEFAULT_TTS_ENGINE,
+    DEFAULT_SPEAKER_COOLDOWN_SEC,
     DEFAULT_MAX_QUEUE_SIZE,
     DEFAULT_MAX_MESSAGE_CHARS,
     DEFAULT_VOICE_READY_TIMEOUT_MS,
@@ -24,10 +26,12 @@ class Config:
         discord_token: str = "",
         discord_client_id: str = "",
         discord_guild_id: str = "",
+        tts_engine: str = DEFAULT_TTS_ENGINE,
         tts_bin: str = "espeak-ng",
         ffmpeg_path: str = "ffmpeg",
         database_path: str = "./data/tts.sqlite",
         speak_usernames: bool = True,
+        speaker_cooldown_sec: int = DEFAULT_SPEAKER_COOLDOWN_SEC,
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
         max_message_chars: int = DEFAULT_MAX_MESSAGE_CHARS,
         voice_ready_timeout_ms: int = DEFAULT_VOICE_READY_TIMEOUT_MS,
@@ -38,10 +42,12 @@ class Config:
         self.DISCORD_TOKEN = discord_token
         self.DISCORD_CLIENT_ID = discord_client_id
         self.DISCORD_GUILD_ID = discord_guild_id
+        self.TTS_ENGINE = tts_engine
         self.TTS_BIN = tts_bin
         self.FFMPEG_PATH = ffmpeg_path
         self.DATABASE_PATH = database_path
         self.SPEAK_USERNAMES = speak_usernames
+        self.SPEAKER_COOLDOWN_SEC = speaker_cooldown_sec
         self.MAX_QUEUE_SIZE = max_queue_size
         self.MAX_MESSAGE_CHARS = max_message_chars
         self.VOICE_READY_TIMEOUT_MS = voice_ready_timeout_ms
@@ -117,6 +123,7 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
 
     raw_guild_id = _clean_str(source.get("DISCORD_GUILD_ID"))
 
+    raw_tts_engine = _clean_str(source.get("TTS_ENGINE")).lower() or DEFAULT_TTS_ENGINE
     raw_tts_bin = _clean_str(source.get("TTS_BIN")) or "espeak-ng"
     raw_ffmpeg_path = _clean_str(source.get("FFMPEG_PATH")) or "ffmpeg"
 
@@ -127,6 +134,7 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
         db_path = str(Path(raw_db_path).resolve())
 
     speak_usernames = _parse_bool(source.get("SPEAK_USERNAMES"), True)
+    speaker_cooldown_sec = _parse_num(source.get("SPEAKER_COOLDOWN_SEC"), DEFAULT_SPEAKER_COOLDOWN_SEC)
     max_queue_size = _parse_num(source.get("MAX_QUEUE_SIZE"), DEFAULT_MAX_QUEUE_SIZE)
     max_message_chars = _parse_num(source.get("MAX_MESSAGE_CHARS"), DEFAULT_MAX_MESSAGE_CHARS)
     voice_ready_timeout_ms = _parse_num(source.get("VOICE_READY_TIMEOUT_MS"), DEFAULT_VOICE_READY_TIMEOUT_MS)
@@ -136,10 +144,12 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
         discord_token=raw_token,
         discord_client_id=raw_client_id,
         discord_guild_id=raw_guild_id,
+        tts_engine=raw_tts_engine,
         tts_bin=raw_tts_bin,
         ffmpeg_path=raw_ffmpeg_path,
         database_path=db_path,
         speak_usernames=speak_usernames,
+        speaker_cooldown_sec=speaker_cooldown_sec,
         max_queue_size=max_queue_size,
         max_message_chars=max_message_chars,
         voice_ready_timeout_ms=voice_ready_timeout_ms,

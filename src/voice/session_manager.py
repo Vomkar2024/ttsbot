@@ -11,7 +11,7 @@ from ..constants import (
     DEFAULT_VOICE_DISCONNECT_GRACE_MS,
     DEFAULT_VOICE_READY_TIMEOUT_MS,
 )
-from ..tts.espeak_provider import EspeakProvider
+from ..tts.unified_provider import UnifiedTTSProvider
 from .discord_voice_session import DiscordVoiceSession
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,8 @@ class VoiceSessionError(Exception):
 class VoiceSessionManager:
     def __init__(
         self,
-        espeak_provider: Optional[EspeakProvider] = None,
+        tts_provider: Optional[Any] = None,
+        espeak_provider: Optional[Any] = None,
         ready_timeout_ms: int = DEFAULT_VOICE_READY_TIMEOUT_MS,
         disconnect_grace_ms: int = DEFAULT_VOICE_DISCONNECT_GRACE_MS,
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
@@ -35,7 +36,8 @@ class VoiceSessionManager:
         options: Optional[dict] = None,
     ):
         opts = options or {}
-        self.espeak_provider = espeak_provider or EspeakProvider()
+        self.tts_provider = tts_provider or espeak_provider or UnifiedTTSProvider()
+        self.espeak_provider = self.tts_provider  # Backward-compatibility alias
         self.ready_timeout_ms = opts.get(
             "readyTimeoutMs", opts.get("ready_timeout_ms", ready_timeout_ms)
         )
@@ -173,23 +175,41 @@ class VoiceSessionManager:
             except Exception:
                 pass
 
-            # Connect to voice channel
-            try:
-                voice_client = await voice_channel.connect(
-                    timeout=self.ready_timeout_sec,
-                    reconnect=True,
-                )
-            except Exception as err:
-                raise VoiceSessionError(
-                    f"Failed to establish voice connection within {self.ready_timeout_ms}ms: {err}",
-                    "CONNECTION_TIMEOUT",
-                ) from err
+            # Connect to voice channel or move existing connection
+            existing_vc = getattr(guild, "voice_client", None)
+            is_vc_conn = False
+            if existing_vc is not None:
+                if hasattr(existing_vc, "is_connected"):
+                    is_vc_conn = existing_vc.is_connected() if callable(existing_vc.is_connected) else bool(existing_vc.is_connected)
+
+            if existing_vc and is_vc_conn:
+                # If guild already has an active voice client, seamlessly move it (MoveVC)
+                if str(getattr(getattr(existing_vc, "channel", None), "id", "")) != str(voice_channel.id):
+                    try:
+                        await existing_vc.move_to(voice_channel)
+                    except Exception as err:
+                        raise VoiceSessionError(
+                            f"Failed to move to voice channel {voice_channel.id}: {err}",
+                            "MOVE_FAILED",
+                        ) from err
+                voice_client = existing_vc
+            else:
+                try:
+                    voice_client = await voice_channel.connect(
+                        timeout=self.ready_timeout_sec,
+                        reconnect=True,
+                    )
+                except Exception as err:
+                    raise VoiceSessionError(
+                        f"Failed to establish voice connection within {self.ready_timeout_ms}ms: {err}",
+                        "CONNECTION_TIMEOUT",
+                    ) from err
 
             session = DiscordVoiceSession(
                 guild_id=guild_id,
                 channel_id=str(voice_channel.id),
                 voice_client=voice_client,
-                espeak_provider=self.espeak_provider,
+                tts_provider=self.tts_provider,
                 max_queue_size=self.max_queue_size,
                 disconnect_grace_ms=self.disconnect_grace_ms,
                 ffmpeg_path=self.ffmpeg_path,

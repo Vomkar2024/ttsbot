@@ -412,6 +412,15 @@ def setup_tts_commands(
             inline=True,
         )
 
+        provider = getattr(session_manager, "tts_provider", None)
+        default_eng = getattr(provider, "default_engine", "gtts") if provider else "gtts"
+        engine_label = "Google Translate TTS (Natural)" if default_eng == "gtts" else "eSpeak NG (Offline)"
+        embed.add_field(
+            name="Speech Engine",
+            value=f"⚡ `{engine_label}`",
+            inline=True,
+        )
+
         session_channel_id = getattr(session, "channel_id", None) if session else None
         if configured_channel_id and session_channel_id:
             if configured_channel_id == session_channel_id:

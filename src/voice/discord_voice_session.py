@@ -8,7 +8,8 @@ from typing import Any, Callable, Optional
 import discord
 
 from ..constants import DEFAULT_MAX_QUEUE_SIZE, DEFAULT_VOICE_DISCONNECT_GRACE_MS
-from ..tts.espeak_provider import AbortError, EspeakProvider
+from ..tts.espeak_provider import AbortError
+from ..tts.unified_provider import UnifiedTTSProvider
 from .serial_queue import QueueJob, SerialQueue
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,8 @@ class DiscordVoiceSession:
         guild_id: str,
         channel_id: str,
         voice_client: discord.VoiceClient,
-        espeak_provider: Optional[EspeakProvider] = None,
+        tts_provider: Optional[Any] = None,
+        espeak_provider: Optional[Any] = None,
         on_disconnect: Optional[Callable[[], None]] = None,
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
         disconnect_grace_ms: int = DEFAULT_VOICE_DISCONNECT_GRACE_MS,
@@ -31,7 +33,8 @@ class DiscordVoiceSession:
         self.guild_id = guild_id
         self.channel_id = channel_id
         self.voice_client = voice_client
-        self.espeak_provider = espeak_provider or EspeakProvider()
+        self.tts_provider = tts_provider or espeak_provider or UnifiedTTSProvider()
+        self.espeak_provider = self.tts_provider
         self.on_disconnect = on_disconnect or (lambda: None)
         self.max_queue_size = opts.get("maxQueueSize", opts.get("max_queue_size", max_queue_size))
         self.disconnect_grace_ms = opts.get(
@@ -63,8 +66,8 @@ class DiscordVoiceSession:
             job.voice,
         )
 
-        # 1. Synthesize audio buffer via eSpeak NG
-        wav_bytes = await self.espeak_provider.synthesize(
+        # 1. Synthesize audio buffer via unified TTS provider
+        audio_bytes = await self.tts_provider.synthesize(
             text=text_to_speak,
             language=job.language,
             voice=job.voice,
@@ -77,7 +80,7 @@ class DiscordVoiceSession:
         logger.info(
             "[VoiceSession Guild %s] Synthesis complete (%d bytes). Starting Discord playback...",
             self.guild_id,
-            len(wav_bytes),
+            len(audio_bytes),
         )
 
         # 2. Play audio stream through VoiceClient
@@ -95,14 +98,15 @@ class DiscordVoiceSession:
             loop.call_soon_threadsafe(play_finished.set)
 
         try:
-            audio_source = discord.FFmpegPCMAudio(
-                io.BytesIO(wav_bytes),
+            raw_source = discord.FFmpegPCMAudio(
+                io.BytesIO(audio_bytes),
                 pipe=True,
                 executable=self.ffmpeg_path,
             )
+            audio_source = discord.PCMVolumeTransformer(raw_source, volume=1.0)
         except Exception as e:
             logger.error(
-                "[VoiceSession Guild %s] Failed to create FFmpegPCMAudio: %s",
+                "[VoiceSession Guild %s] Failed to create audio source: %s",
                 self.guild_id,
                 e,
             )

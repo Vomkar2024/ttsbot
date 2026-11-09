@@ -103,18 +103,42 @@ async def handle_message_create(
         )
         return False
 
+    # 4.5. Ignore command invocations (e.g. messages starting with '!' or '/')
+    content_raw = (
+        getattr(message, "content", "")
+        if not isinstance(message, dict)
+        else message.get("content", "")
+    )
+    if content_raw and content_raw.strip().startswith(("!", "/")):
+        return False
+
+    # Resolve author ID
+    author_id = str(
+        author.get("id") if isinstance(author, dict) else getattr(author, "id", "")
+    )
+
+    # 4.6. Check speaker cooldown (suppress repetitive 'Alice says:' within cooldown window)
+    tracker = ctx.get("speaker_cooldown_tracker") or ctx.get("speakerCooldownTracker")
+    should_announce = True
+    if tracker and hasattr(tracker, "should_announce_name"):
+        should_announce = tracker.should_announce_name(guild_id, author_id)
+
     # 5. Clean, format, and truncate message text
     speak_usernames = getattr(cfg, "SPEAK_USERNAMES", True) if cfg else True
     max_chars = getattr(cfg, "MAX_MESSAGE_CHARS", 800) if cfg else 800
+    announce_links = getattr(cfg, "ANNOUNCE_LINKS", False) if cfg else False
 
     if isinstance(cfg, dict):
         speak_usernames = cfg.get("SPEAK_USERNAMES", True)
         max_chars = cfg.get("MAX_MESSAGE_CHARS", 800)
+        announce_links = cfg.get("ANNOUNCE_LINKS", False)
 
     formatted = format_message_for_tts(
         message,
         speak_usernames=speak_usernames,
+        should_announce_name=should_announce,
         max_chars=max_chars,
+        announce_links=announce_links,
     )
 
     if not formatted:

@@ -1,6 +1,6 @@
 # Discord TTS Bot (Python Edition)
 
-An independent Discord text-to-speech bot written in Python. It automatically reads messages sent in the active voice channel's built-in text chat, as well as any configured text channel. Speech is synthesized locally with **eSpeak NG**; per-server defaults and per-user overrides are stored in **SQLite**.
+An independent Discord text-to-speech bot written in Python, featuring dual-engine synthesis (**Google Translate TTS (gTTS)** for natural, human speech and **eSpeak NG** for offline local synthesis with automatic fallback), full Discord DAVE voice encryption support, and intelligent message processing adapted from [Discord-TTS/Bot](https://github.com/Discord-TTS/Bot). It automatically reads messages sent in the active voice channel's built-in text chat, as well as any configured text channel.
 
 ---
 
@@ -9,36 +9,33 @@ An independent Discord text-to-speech bot written in Python. It automatically re
 | Command | Description |
 | :--- | :--- |
 | `/setup` | Choose a text or voice channel to be read aloud (*Manage Server permission required*). |
-| `/join` | Join the voice channel you are currently in. |
+| `/join` | Join the voice channel you are currently in (supports seamless channel switching). |
 | `/leave` | Leave voice and discard current and pending speech. |
-| `/voice` | Select an eSpeak voice variant for yourself, or set the server default. |
+| `/voice` | Select natural accents (US, UK, Australia, India, etc.) or eSpeak variants for yourself, or set the server default. |
 | `/language` | Select the speech language for yourself, or set the server default. |
 | `/queue` | Inspect the current message and waiting queue. |
 | `/skip` | Cancel only the current message; the next waiting item starts. |
 | `/stop` | Cancel current speech and discard all waiting items. |
 | `/clear` | Discard waiting items without interrupting current speech. |
-| `/status` | Show active listening text channels, voice connection, and server defaults. |
+| `/status` | Show active listening text channels, voice connection, active speech engine, and server defaults. |
 
-### Preferences & Overrides
-Personal preferences override server defaults **field by field**. For example, a user can keep the server's default voice variant while choosing a personal language.
-
-### Message Processing Rules
-Messages are only enqueued when **all** of these are true:
-1. They are normal user messages in a server (bot messages, webhooks, and DMs are ignored).
-2. The message is sent directly in the **active voice channel's built-in text chat** OR in a channel configured with `/setup`.
-3. The bot is actively connected to voice in that server.
-
-Empty messages and messages that become empty after sanitization (e.g. standalone URLs or emojis) are ignored. The default behavior prefixes the speaker's display name (`Alice says: ...`); set `SPEAK_USERNAMES=false` in `.env` to turn that off.
+### Advanced Voice & Chat Intelligence (matching Discord-TTS/Bot)
+- **Natural Speech & Dual-Engine Fallback**: Default to **gTTS** for realistic, fluent voices with automatic fallback to **eSpeak NG**.
+- **Speaker Announcement Cooldown**: 60-second cooldown so consecutive messages from the same user don't repetitively repeat `"Alice says:"`.
+- **Link & Attachment Speech Context**: Transcodes links into `"Alice sent a link"` and file attachments into `"Alice sent an image file"`, `"an audio file"`, `"a text file"`, etc.
+- **Chat Acronym Expansion**: Expands common acronyms (`iirc`, `afaik`, `btw`, `rn`, `brb`, `:)`, `:(`).
+- **Spam Character Limiting**: Truncates repetitive characters (e.g. `loooooool` -> `loool`).
+- **Seamless Channel Moves**: Uses Discord gateway `move_to` for smooth channel transitions without reconnect race conditions.
 
 ---
 
 ## Technology Choices
 
-- **Python 3.10+ (tested with 3.13)**: Asynchronous architecture built on `asyncio`.
-- **discord.py 2.3+**: Maintained Discord API library with application slash-command tree (`app_commands.Group`) and gateway abstractions.
+- **Python 3.10+ (tested with 3.13 & 3.14)**: Asynchronous architecture built on `asyncio`.
+- **discord.py 2.5+**: Maintained Discord API library with application slash-command tree and gateway abstractions.
 - **PyNaCl & davey**: Voice protocol audio encryption and Discord DAVE protocol (End-to-End Encryption) for voice connections.
-- **eSpeak NG**: Offline, local, zero-account, zero-cost TTS engine. Text is streamed directly to `stdin` and raw WAV audio is collected from `stdout`.
-- **FFmpeg**: Transcodes local audio stream into Discord-compatible 48kHz stereo Opus frames (`discord.FFmpegPCMAudio`).
+- **gTTS & eSpeak NG**: Dual-engine pipeline. gTTS provides natural online voices; eSpeak NG provides zero-dependency offline local audio.
+- **FFmpeg**: Transcodes local audio stream into Discord-compatible 48kHz stereo Opus frames (`discord.FFmpegPCMAudio` with `PCMVolumeTransformer`).
 - **Python's built-in `sqlite3`**: Persistent, fast local settings storage without operating an external database server.
 
 ---
