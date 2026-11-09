@@ -1,5 +1,6 @@
 """Configuration loader for VoiceBridge TTS Bot."""
 
+import base64
 import os
 from pathlib import Path
 from typing import Mapping, Optional
@@ -57,17 +58,46 @@ class Config:
         return self.VOICE_DISCONNECT_GRACE_MS / 1000.0
 
 
+def _clean_str(val: Optional[str]) -> str:
+    if val is None:
+        return ""
+    s = str(val).strip()
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        s = s[1:-1].strip()
+    return s
+
+
+def _extract_app_id_from_token(token: str) -> str:
+    """Extract client/app ID from the base64-encoded prefix of a Discord token."""
+    parts = token.split(".")
+    if not parts or not parts[0]:
+        return ""
+    prefix = parts[0]
+    rem = len(prefix) % 4
+    if rem:
+        prefix += "=" * (4 - rem)
+    try:
+        decoded = base64.b64decode(prefix).decode("utf-8")
+        if decoded.isdigit():
+            return decoded
+    except Exception:
+        pass
+    return ""
+
+
 def _parse_bool(val: Optional[str], default_val: bool = True) -> bool:
-    if val is None or str(val).strip() == "":
+    cleaned = _clean_str(val)
+    if not cleaned:
         return default_val
-    return str(val).strip().lower() not in ("false", "0", "no", "off")
+    return cleaned.lower() not in ("false", "0", "no", "off")
 
 
 def _parse_num(val: Optional[str], default_val: int) -> int:
-    if val is None:
+    cleaned = _clean_str(val)
+    if not cleaned:
         return default_val
     try:
-        num = int(str(val).strip())
+        num = int(cleaned)
         return num if num > 0 else default_val
     except ValueError:
         return default_val
@@ -76,15 +106,17 @@ def _parse_num(val: Optional[str], default_val: int) -> int:
 def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
     source = os.environ if env is None else env
 
-    raw_token = source.get("DISCORD_TOKEN", "").strip()
-    raw_client_id = source.get("DISCORD_CLIENT_ID", "") or source.get("CLIENT_ID", "")
-    raw_client_id = raw_client_id.strip()
-    raw_guild_id = source.get("DISCORD_GUILD_ID", "").strip()
+    raw_token = _clean_str(source.get("DISCORD_TOKEN"))
+    raw_client_id = _clean_str(source.get("DISCORD_CLIENT_ID") or source.get("CLIENT_ID"))
+    if not raw_client_id and raw_token:
+        raw_client_id = _extract_app_id_from_token(raw_token)
 
-    raw_tts_bin = source.get("TTS_BIN", "espeak-ng").strip() or "espeak-ng"
-    raw_ffmpeg_path = source.get("FFMPEG_PATH", "ffmpeg").strip() or "ffmpeg"
+    raw_guild_id = _clean_str(source.get("DISCORD_GUILD_ID"))
 
-    raw_db_path = source.get("DATABASE_PATH", "./data/voicebridge.sqlite").strip() or "./data/voicebridge.sqlite"
+    raw_tts_bin = _clean_str(source.get("TTS_BIN")) or "espeak-ng"
+    raw_ffmpeg_path = _clean_str(source.get("FFMPEG_PATH")) or "ffmpeg"
+
+    raw_db_path = _clean_str(source.get("DATABASE_PATH")) or "./data/voicebridge.sqlite"
     if raw_db_path == ":memory:":
         db_path = ":memory:"
     else:

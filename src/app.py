@@ -160,37 +160,64 @@ async def main_async() -> None:
             loop.add_signal_handler(s, lambda s=s: _sig_handler(signal.Signals(s).name))
 
     if not bot.cfg.DISCORD_TOKEN:
-        logger.warning("[VoiceBridge] DISCORD_TOKEN is missing in .env. Bot cannot connect to Discord.")
-        return
+        err_msg = (
+            "\n" + "=" * 65 + "\n"
+            " ❌ [CONFIGURATION ERROR] DISCORD_TOKEN is missing in .env\n"
+            "=" * 65 + "\n"
+            " HOW TO FIX:\n"
+            " 1. Create or open the .env file in your bot root directory.\n"
+            " 2. Add: DISCORD_TOKEN=<your_token_from_discord_developer_portal>\n"
+            " 3. Restart the bot.\n"
+            "=" * 65 + "\n"
+        )
+        print(err_msg, file=sys.stderr, flush=True)
+        logger.critical(err_msg)
+        sys.exit(1)
 
     app_id = bot.cfg.DISCORD_CLIENT_ID or "YOUR_APP_ID"
 
     try:
         await bot.start(bot.cfg.DISCORD_TOKEN)
     except discord.errors.LoginFailure:
-        logger.critical(
-            "[VoiceBridge] Discord refused the bot token (HTTP 401 Unauthorized).\n"
-            "  The token in .env is invalid, revoked, or expired.\n"
-            "  How to fix:\n"
-            "  1. Go to Discord Developer Portal: https://discord.com/developers/applications/%s/bot\n"
-            "  2. Click 'Reset Token' and copy the newly generated token.\n"
-            "  3. Paste the new token into your .env file: DISCORD_TOKEN=<new_token>\n"
-            "  4. Ensure 'MESSAGE CONTENT INTENT' is enabled under Privileged Gateway Intents.\n"
-            "  5. Verify token status anytime with: python scripts/verify_token.py",
-            app_id,
+        err_msg = (
+            "\n" + "=" * 65 + "\n"
+            " ❌ [AUTHENTICATION FAILED] Discord refused the bot token.\n"
+            "    HTTP 401 Unauthorized: Improper token has been passed.\n"
+            "=" * 65 + "\n"
+            " The token in your .env or hosting environment is invalid, expired, or reset.\n\n"
+            " HOW TO FIX:\n"
+            f" 1. Go to Discord Developer Portal:\n"
+            f"    https://discord.com/developers/applications/{app_id}/bot\n"
+            " 2. Click 'Reset Token' and confirm.\n"
+            " 3. Copy your newly generated bot token.\n"
+            " 4. Update DISCORD_TOKEN in .env (locally and in your hosting panel's File Manager):\n"
+            "    DISCORD_TOKEN=your_new_token_here  (do NOT include quotes!)\n"
+            " 5. Under 'Privileged Gateway Intents' on the same page, ensure\n"
+            "    'MESSAGE CONTENT INTENT' is toggled ON (green check).\n"
+            " 6. Restart your bot.\n"
+            "=" * 65 + "\n"
         )
+        print(err_msg, file=sys.stderr, flush=True)
+        logger.critical(err_msg)
+        sys.exit(1)
     except discord.errors.PrivilegedIntentsRequired:
-        logger.critical(
-            "[VoiceBridge] Discord refused connection: Disallowed Privileged Intents.\n"
-            "  VoiceBridge TTS Bot requires 'Message Content Intent' to read messages aloud.\n"
-            "  How to fix:\n"
-            "  1. Go to Discord Developer Portal: https://discord.com/developers/applications/%s/bot\n"
-            "  2. Scroll down to 'Privileged Gateway Intents'.\n"
-            "  3. Turn ON 'MESSAGE CONTENT INTENT'.\n"
-            "  4. Click 'Save Changes' at the bottom of the page.\n"
-            "  5. Restart the bot: python main.py",
-            app_id,
+        err_msg = (
+            "\n" + "=" * 65 + "\n"
+            " ❌ [PRIVILEGED INTENTS REQUIRED] Message Content Intent is disabled.\n"
+            "=" * 65 + "\n"
+            " VoiceBridge TTS Bot requires 'Message Content Intent' to read messages aloud.\n\n"
+            " HOW TO FIX:\n"
+            f" 1. Go to Discord Developer Portal:\n"
+            f"    https://discord.com/developers/applications/{app_id}/bot\n"
+            " 2. Scroll down to 'Privileged Gateway Intents'.\n"
+            " 3. Toggle 'MESSAGE CONTENT INTENT' to ON (green check).\n"
+            " 4. Click 'Save Changes' at the bottom of the page.\n"
+            " 5. Restart your bot.\n"
+            "=" * 65 + "\n"
         )
+        print(err_msg, file=sys.stderr, flush=True)
+        logger.critical(err_msg)
+        sys.exit(1)
     except (asyncio.CancelledError, KeyboardInterrupt):
         pass
     except Exception as err:
@@ -202,7 +229,7 @@ async def main_async() -> None:
 def start_app() -> None:
     try:
         asyncio.run(main_async())
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt:
         pass
 
 
