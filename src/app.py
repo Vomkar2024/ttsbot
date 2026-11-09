@@ -187,6 +187,48 @@ async def main_async() -> None:
             dep_str,
         )
 
+    # Pre-flight system binary check (eSpeak NG & FFmpeg)
+    import shutil
+    resolved_espeak = bot.espeak_provider.resolve_binary_path()
+    resolved_ffmpeg = shutil.which(bot.cfg.FFMPEG_PATH)
+
+    if not resolved_espeak or not resolved_ffmpeg:
+        missing_binaries = []
+        if not resolved_espeak:
+            missing_binaries.append("eSpeak NG")
+        if not resolved_ffmpeg:
+            missing_binaries.append("FFmpeg")
+
+        bin_str = " & ".join(missing_binaries)
+        warn_lines = [
+            "\n" + "=" * 65,
+            f" ⚠️ [SYSTEM BINARY WARNING] Missing: {bin_str}",
+            "=" * 65,
+            " The bot requires these system binaries to synthesize and stream audio.",
+        ]
+
+        if sys.platform != "win32" and (":" in bot.cfg.TTS_BIN or "\\" in bot.cfg.TTS_BIN):
+            warn_lines.append(
+                f"\n ⚠️ PLATFORM MISMATCH: TTS_BIN is set to a Windows path ('{bot.cfg.TTS_BIN}') on Linux.\n"
+                "    Please set TTS_BIN=espeak-ng in your hosting environment variables or .env."
+            )
+
+        warn_lines.extend([
+            "\n HOW TO FIX ON BOT HOSTING / LINUX (VPS, Docker, Pterodactyl):",
+            "   1. Ubuntu / Debian VPS: sudo apt update && sudo apt install -y espeak-ng ffmpeg",
+            "   2. Docker: Add 'RUN apt-get update && apt-get install -y espeak-ng ffmpeg' to Dockerfile",
+            "   3. Discloud: In discloud.config set APT=tools,espeak-ng,ffmpeg",
+            "   4. Pterodactyl: Select a container egg with audio/apt support or contact host support.",
+            "\n HOW TO FIX ON WINDOWS:",
+            "   - eSpeak NG: Install from https://github.com/espeak-ng/espeak-ng/releases",
+            "   - FFmpeg: winget install Gyan.FFmpeg (or add ffmpeg.exe to PATH)",
+            "=" * 65 + "\n",
+        ])
+
+        full_warn = "\n".join(warn_lines)
+        print(full_warn, file=sys.stderr, flush=True)
+        logger.warning("System binaries missing: %s. TTS playback will fail until installed.", bin_str)
+
     if not bot.cfg.DISCORD_TOKEN:
         err_msg = (
             "\n" + "=" * 65 + "\n"

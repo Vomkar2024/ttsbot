@@ -183,6 +183,33 @@ espeak-ng --version
 
 The bot will automatically create the SQLite database and `data/` directory.
 
+---
+
+## Bot Hosting & Cloud Deployment Guide
+
+When deploying to 24/7 bot hosting platforms, remember that **eSpeak NG** and **FFmpeg** are native system binaries that must be present in the container/server.
+
+### 1. Docker / VPS / Cloud Containers (Recommended)
+Use the included [`Dockerfile`](file:///e:/Download/Omkar/botmaker/tts/Dockerfile). It automatically installs `espeak-ng`, `ffmpeg`, and required libraries:
+```bash
+docker build -t discord-tts-bot .
+docker run -d --name tts-bot --env-file .env -v $(pwd)/data:/app/data discord-tts-bot
+```
+
+### 2. Discloud
+A [`discloud.config`](file:///e:/Download/Omkar/botmaker/tts/discloud.config) file is included with `APT=tools,espeak-ng,ffmpeg`.
+1. Upload your project files (including `discloud.config` and `.env`).
+2. Discloud will automatically install `espeak-ng` and `ffmpeg` during startup.
+
+### 3. Railway / Render / Fly.io
+The included [`nixpacks.toml`](file:///e:/Download/Omkar/botmaker/tts/nixpacks.toml) and [`apt.txt`](file:///e:/Download/Omkar/botmaker/tts/apt.txt) automatically declare `espeak-ng` and `ffmpeg` as system dependencies.
+
+### 4. Shared Pterodactyl Panels (PebbleHost, BisectHosting, SparkedHost, etc.)
+- In your hosting panel's **Environment Variables** or `.env`, make sure `TTS_BIN` is set to `espeak-ng` (NOT a Windows path like `C:\Program Files\...`).
+- If your host's default Python egg lacks `ffmpeg` or `espeak-ng`, switch to a Python Egg that includes audio/FFmpeg tools, or ask host support to install `espeak-ng` and `ffmpeg` on your egg image.
+
+---
+
 ### Quick Discord Usage
 1. A server manager runs `/setup` in the desired text channel (or specifies one).
 2. Users join a voice channel and run `/join`.

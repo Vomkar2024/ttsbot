@@ -54,6 +54,37 @@ class TestEspeakProvider(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(wav[12:16], b"fmt ")
         self.assertEqual(wav[36:40], b"data")
 
+    def test_resolve_binary_cross_platform_fallback(self):
+        from unittest.mock import patch
+
+        # Simulate Linux where Windows path was configured in .env
+        provider = EspeakProvider(tts_bin=r"C:\Program Files\eSpeak NG\espeak-ng.exe")
+
+        def mock_which(cmd):
+            if cmd == "espeak-ng":
+                return "/usr/bin/espeak-ng"
+            return None
+
+        with patch("src.tts.espeak_provider.shutil.which", side_effect=mock_which):
+            with patch("pathlib.Path.is_file", return_value=False):
+                resolved = provider.resolve_binary_path()
+                self.assertEqual(resolved, "/usr/bin/espeak-ng")
+
+    def test_resolve_binary_falls_back_to_legacy_espeak(self):
+        from unittest.mock import patch
+
+        provider = EspeakProvider(tts_bin="espeak-ng")
+
+        def mock_which(cmd):
+            if cmd == "espeak":
+                return "/usr/bin/espeak"
+            return None
+
+        with patch("src.tts.espeak_provider.shutil.which", side_effect=mock_which):
+            with patch("pathlib.Path.is_file", return_value=False):
+                resolved = provider.resolve_binary_path()
+                self.assertEqual(resolved, "/usr/bin/espeak")
+
     async def test_runs_real_synthesis_if_installed_or_skips(self):
         provider = EspeakProvider(tts_bin="espeak-ng")
         available = await provider.is_available()

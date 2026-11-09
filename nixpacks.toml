@@ -1,0 +1,10 @@
+# Nixpacks configuration for Railway / Render
+[phases.setup]
+nixPkgs = ["python312", "espeak-ng", "ffmpeg"]
+
+[phases.install]
+cmds = ["python -m pip install -r requirements.txt"]
+
+[start]
+cmd = "python main.py"
+
