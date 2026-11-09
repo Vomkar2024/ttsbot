@@ -41,7 +41,16 @@ class DiscordVoiceSession:
             "disconnectGraceMs", opts.get("disconnect_grace_ms", disconnect_grace_ms)
         )
         self.disconnect_grace_sec = self.disconnect_grace_ms / 1000.0
-        self.ffmpeg_path = opts.get("ffmpegPath", opts.get("ffmpeg_path", ffmpeg_path))
+        configured_ffmpeg = opts.get("ffmpegPath", opts.get("ffmpeg_path", ffmpeg_path))
+        if configured_ffmpeg == "ffmpeg":
+            try:
+                from .session_manager import resolve_ffmpeg_path
+
+                self.ffmpeg_path = resolve_ffmpeg_path(configured_ffmpeg)
+            except Exception:
+                self.ffmpeg_path = configured_ffmpeg
+        else:
+            self.ffmpeg_path = configured_ffmpeg
 
         vc_loop = getattr(voice_client, "loop", None)
         self.serial_queue = SerialQueue(
@@ -143,6 +152,71 @@ class DiscordVoiceSession:
                 except Exception:
                     pass
                 raise AbortError("Playback cancelled by user")
+
+            if play_error:
+                raise play_error
+        finally:
+            try:
+                audio_source.cleanup()
+            except Exception:
+                pass
+
+    async def play_test_tone(
+        self,
+        duration: float = 3.0,
+        frequency: float = 440.0,
+        volume: float = 0.5,
+        use_ffmpeg: bool = False,
+    ) -> None:
+        """Plays a pure sine wave test tone through the active voice connection.
+
+        Args:
+            duration: Tone length in seconds (default 3.0).
+            frequency: Frequency in Hz (default 440.0 Hz).
+            volume: Amplitude from 0.0 to 1.0 (default 0.5).
+            use_ffmpeg: If True, tests the FFmpeg decoding pipeline via an in-memory WAV.
+                        If False, streams PCM directly via ToneAudioSource without FFmpeg.
+        """
+        if not self.voice_client or not self.voice_client.is_connected():
+            raise AbortError("Voice client disconnected before tone playback")
+
+        from .tone_generator import ToneAudioSource, generate_sine_wav
+
+        if use_ffmpeg:
+            wav_bytes = generate_sine_wav(
+                frequency=frequency,
+                duration=duration,
+                volume=volume,
+            )
+            raw_source = discord.FFmpegPCMAudio(
+                io.BytesIO(wav_bytes),
+                pipe=True,
+                executable=self.ffmpeg_path,
+            )
+            audio_source = discord.PCMVolumeTransformer(raw_source, volume=1.0)
+        else:
+            audio_source = ToneAudioSource(
+                frequency=frequency,
+                duration=duration,
+                volume=volume,
+            )
+
+        loop = asyncio.get_running_loop()
+        play_finished = asyncio.Event()
+        play_error: Optional[Exception] = None
+
+        def _after_play(error: Optional[Exception]) -> None:
+            nonlocal play_error
+            if error:
+                play_error = error
+            loop.call_soon_threadsafe(play_finished.set)
+
+        try:
+            if self.voice_client.is_playing() or self.voice_client.is_paused():
+                self.voice_client.stop()
+
+            self.voice_client.play(audio_source, after=_after_play)
+            await play_finished.wait()
 
             if play_error:
                 raise play_error

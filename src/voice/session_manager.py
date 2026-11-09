@@ -1,5 +1,6 @@
 """Voice session manager handling per-guild concurrency serialization, channel moves, and lifecycle."""
-
+import shutil
+import os
 import asyncio
 import inspect
 import logging
@@ -17,6 +18,28 @@ from .discord_voice_session import DiscordVoiceSession
 
 logger = logging.getLogger(__name__)
 
+def resolve_ffmpeg_path(configured="ffmpeg"):
+    # First try system FFmpeg
+    system_ffmpeg = shutil.which(configured)
+
+    if system_ffmpeg:
+        return system_ffmpeg
+
+    # Fall back to bundled FFmpeg
+    try:
+        import imageio_ffmpeg
+
+        bundled = imageio_ffmpeg.get_ffmpeg_exe()
+
+        if bundled and os.path.isfile(bundled):
+            logger.info("Using bundled FFmpeg: %s", bundled)
+            return bundled
+
+    except Exception:
+        logger.exception("Could not load bundled FFmpeg")
+
+    logger.error("FFmpeg executable not found!")
+    return configured
 
 class VoiceSessionError(Exception):
     def __init__(self, message: str, code: str):
@@ -48,8 +71,13 @@ class VoiceSessionManager:
         )
         self.max_queue_size = opts.get(
             "maxQueueSize", opts.get("max_queue_size", max_queue_size)
+                )
+        configured_ffmpeg = opts.get(
+            "ffmpegPath",
+            opts.get("ffmpeg_path", ffmpeg_path)
         )
-        self.ffmpeg_path = opts.get("ffmpegPath", opts.get("ffmpeg_path", ffmpeg_path))
+
+        self.ffmpeg_path = resolve_ffmpeg_path(configured_ffmpeg)
 
         self.sessions: Dict[str, DiscordVoiceSession] = {}
         self._guild_locks: Dict[str, asyncio.Lock] = {}
@@ -307,4 +335,4 @@ class VoiceSessionManager:
     destroyAllAsync = destroy_all_async
 
 
-__all__ = ["VoiceSessionManager", "VoiceSessionError"]
+__all__ = ["VoiceSessionManager", "VoiceSessionError", "resolve_ffmpeg_path"]
