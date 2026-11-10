@@ -10,6 +10,7 @@ import discord
 from ..constants import DEFAULT_MAX_QUEUE_SIZE, DEFAULT_VOICE_DISCONNECT_GRACE_MS
 from ..tts.espeak_provider import AbortError
 from ..tts.unified_provider import UnifiedTTSProvider
+from .dave_compat import inspect_voice_connection_state
 from .serial_queue import QueueJob, SerialQueue
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,45 @@ class DiscordVoiceSession:
 
         self.is_destroyed = False
         self._reconnect_task: Optional[asyncio.Task] = None
+        self._last_voice_diag: Optional[tuple] = None
+
+    def _log_voice_transport_state(self) -> None:
+        diag = inspect_voice_connection_state(self.voice_client)
+        if diag is None:
+            return
+
+        state_key = (
+            diag.get("mode"),
+            diag.get("dave_protocol_version"),
+            diag.get("can_encrypt"),
+            diag.get("dave_ready"),
+            diag.get("dave_status"),
+        )
+        if state_key != self._last_voice_diag:
+            self._last_voice_diag = state_key
+            logger.info(
+                "[VoiceSession Guild %s] Voice transport state: mode=%s, dave_v=%s, "
+                "can_encrypt=%s, dave_ready=%s, dave_status=%s",
+                self.guild_id,
+                diag.get("mode"),
+                diag.get("dave_protocol_version"),
+                diag.get("can_encrypt"),
+                diag.get("dave_ready"),
+                diag.get("dave_status"),
+            )
+
+        dave_ver = diag.get("dave_protocol_version") or 0
+        if dave_ver > 0 and diag.get("can_encrypt") is not True:
+            logger.warning(
+                "[VoiceSession Guild %s] DAVE E2EE v%s is negotiated, but encryption is NOT ready "
+                "(can_encrypt=%s, dave_ready=%s, dave_status=%s). Audio packets will be sent "
+                "unencrypted and dropped by Discord clients. Ensure davey<0.2.0 or DAVE compat bridge is active.",
+                self.guild_id,
+                dave_ver,
+                diag.get("can_encrypt"),
+                diag.get("dave_ready"),
+                diag.get("dave_status"),
+            )
 
     async def _process_job(self, job: QueueJob, cancel_event: asyncio.Event) -> None:
         """Synthesizes audio via eSpeak and streams it through discord.VoiceClient."""
@@ -106,6 +146,8 @@ class DiscordVoiceSession:
         if not self.voice_client or not self.voice_client.is_connected():
             raise AbortError("Voice client disconnected before playback")
 
+        self._log_voice_transport_state()
+
         loop = asyncio.get_running_loop()
         play_finished = asyncio.Event()
         play_error: Optional[Exception] = None
@@ -131,15 +173,14 @@ class DiscordVoiceSession:
             )
             raise e
 
+        play_started = False
         try:
             # Stop any previous lingering audio on voice client
             if self.voice_client.is_playing() or self.voice_client.is_paused():
                 self.voice_client.stop()
 
-            try:
-                self.voice_client.play(audio_source, after=_after_play)
-            except Exception as e:
-                raise e
+            self.voice_client.play(audio_source, after=_after_play)
+            play_started = True
 
             # Wait for either completion or cancellation
             cancel_waiter = loop.create_task(cancel_event.wait())
@@ -164,10 +205,11 @@ class DiscordVoiceSession:
             if play_error:
                 raise play_error
         finally:
-            try:
-                audio_source.cleanup()
-            except Exception:
-                pass
+            if not play_started:
+                try:
+                    audio_source.cleanup()
+                except Exception:
+                    pass
 
     async def play_test_tone(
         self,
@@ -187,6 +229,8 @@ class DiscordVoiceSession:
         """
         if not self.voice_client or not self.voice_client.is_connected():
             raise AbortError("Voice client disconnected before tone playback")
+
+        self._log_voice_transport_state()
 
         from .tone_generator import ToneAudioSource, generate_sine_wav
 
@@ -219,20 +263,23 @@ class DiscordVoiceSession:
                 play_error = error
             loop.call_soon_threadsafe(play_finished.set)
 
+        play_started = False
         try:
             if self.voice_client.is_playing() or self.voice_client.is_paused():
                 self.voice_client.stop()
 
             self.voice_client.play(audio_source, after=_after_play)
+            play_started = True
             await play_finished.wait()
 
             if play_error:
                 raise play_error
         finally:
-            try:
-                audio_source.cleanup()
-            except Exception:
-                pass
+            if not play_started:
+                try:
+                    audio_source.cleanup()
+                except Exception:
+                    pass
 
     async def destroy_async(self) -> None:
         """Closes player, drops queue, and disconnects the voice client."""

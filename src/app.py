@@ -18,6 +18,11 @@ from .storage.settings_store import SettingsStore
 from .translation.factory import create_translator_provider
 from .tts.format_message import SpeakerCooldownTracker
 from .tts.unified_provider import UnifiedTTSProvider
+from .voice.dave_compat import (
+    check_dependency_warnings,
+    ensure_dave_compat,
+    get_voice_dependency_versions,
+)
 from .voice.session_manager import VoiceSessionManager
 
 logging.basicConfig(
@@ -250,7 +255,7 @@ async def main_async() -> None:
         for s in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(s, lambda s=s: _sig_handler(signal.Signals(s).name))
 
-    # Pre-flight voice dependency check
+    # Pre-flight voice dependency & DAVE compatibility check
     import discord.voice_client
 
     missing_deps = []
@@ -258,6 +263,21 @@ async def main_async() -> None:
         missing_deps.append("PyNaCl")
     if not getattr(discord.voice_client, "has_dave", False):
         missing_deps.append("davey")
+
+    compat_status = ensure_dave_compat()
+    dep_versions = get_voice_dependency_versions()
+    logger.info(
+        "[Preflight] Voice dependencies: discord.py=%s, davey=%s, PyNaCl=%s, "
+        "has_nacl=%s, has_dave=%s, dave_compat_patched=%s",
+        dep_versions.get("discord_py") or "unknown",
+        dep_versions.get("davey") or "missing",
+        dep_versions.get("pynacl") or "missing",
+        dep_versions.get("has_nacl"),
+        dep_versions.get("has_dave"),
+        compat_status.get("applied") or compat_status.get("already_patched"),
+    )
+    for dep_warning in check_dependency_warnings(dep_versions):
+        logger.warning("[Preflight] %s", dep_warning)
 
     if missing_deps:
         dep_str = " and ".join(missing_deps)

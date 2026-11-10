@@ -20,6 +20,12 @@ load_dotenv()
 # Add project root to sys.path so src modules can be imported
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from src.voice.dave_compat import (
+    check_dependency_warnings,
+    ensure_dave_compat,
+    get_voice_dependency_versions,
+    inspect_voice_connection_state,
+)
 from src.voice.tone_generator import ToneAudioSource, generate_sine_wav
 from src.voice.session_manager import resolve_ffmpeg_path
 
@@ -33,22 +39,29 @@ def check_prerequisites():
     import discord
     import discord.voice_client
 
+    compat = ensure_dave_compat()
+    versions = get_voice_dependency_versions()
+
     print(f"• Python version       : {sys.version.split()[0]}")
     print(f"• discord.py version   : {discord.__version__}")
 
     # Check PyNaCl
     has_nacl = getattr(discord.voice_client, "has_nacl", False)
     if has_nacl:
-        print("• PyNaCl (libsodium)   : ✅ Installed (UDP voice encryption ready)")
+        print(f"• PyNaCl (libsodium)   : ✅ Installed v{versions.get('pynacl') or 'unknown'} (UDP voice encryption ready)")
     else:
-        print("• PyNaCl (libsodium)   : ❌ MISSING! (Voice requires PyNaCl: run 'pip install PyNaCl')")
+        print("• PyNaCl (libsodium)   : ❌ MISSING! (Voice requires PyNaCl: run 'pip install \"PyNaCl>=1.5.0,<1.6\"')")
 
     # Check davey (DAVE protocol)
     has_dave = getattr(discord.voice_client, "has_dave", False)
     if has_dave:
-        print("• davey (DAVE protocol): ✅ Installed (E2EE voice encryption ready)")
+        compat_note = " (compat bridge active)" if compat.get("applied") or compat.get("already_patched") else ""
+        print(f"• davey (DAVE protocol): ✅ Installed v{versions.get('davey') or 'unknown'}{compat_note}")
     else:
-        print("• davey (DAVE protocol): ⚠️ Not installed (discord.py may require davey)")
+        print("• davey (DAVE protocol): ⚠️ Not installed (discord.py requires davey<0.2.0)")
+
+    for warn_msg in check_dependency_warnings(versions):
+        print(f"• Dependency warning   : ⚠️ {warn_msg}")
 
     # Check FFmpeg
     sys_ffmpeg = shutil.which("ffmpeg")
@@ -189,8 +202,15 @@ async def run_diagnostic(
         # Inspect VoiceClient internal UDP and encryption parameters
         endpoint = getattr(voice_client, "endpoint", "Unknown")
         selected_mode = getattr(voice_client, "mode", "Unknown")
+        diag = inspect_voice_connection_state(voice_client)
         print(f"• Voice Server Endpoint : {endpoint}")
         print(f"• Voice Encryption Mode : {selected_mode}")
+        if diag:
+            print(
+                f"• DAVE E2EE State       : v{diag.get('dave_protocol_version')} "
+                f"(can_encrypt={diag.get('can_encrypt')}, ready={diag.get('dave_ready')}, "
+                f"status={diag.get('dave_status')})"
+            )
 
         # [4/4] Transmit 440 Hz Test Tone
         mode_label = "FFmpeg PCMAudio" if use_ffmpeg else "Direct PCM ToneAudioSource (No FFmpeg/No TTS)"

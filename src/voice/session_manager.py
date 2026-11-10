@@ -14,6 +14,7 @@ from ..constants import (
     DEFAULT_VOICE_READY_TIMEOUT_MS,
 )
 from ..tts.unified_provider import UnifiedTTSProvider
+from .dave_compat import ensure_dave_compat
 from .discord_voice_session import DiscordVoiceSession
 
 logger = logging.getLogger(__name__)
@@ -184,14 +185,15 @@ class VoiceSessionManager:
                 import discord.voice_client
                 if not getattr(discord.voice_client, "has_nacl", False):
                     raise VoiceSessionError(
-                        "PyNaCl library needed in order to use voice. Install it via 'pip install PyNaCl' and restart the bot.",
+                        "PyNaCl library needed in order to use voice. Install it via 'pip install \"PyNaCl>=1.5.0,<1.6\"' and restart the bot.",
                         "MISSING_VOICE_DEPENDENCY",
                     )
                 if not getattr(discord.voice_client, "has_dave", False):
                     raise VoiceSessionError(
-                        "davey library needed in order to use voice. Install it via 'pip install davey' and restart the bot.",
+                        "davey library needed in order to use voice. Install it via 'pip install \"davey>=0.1.7,<0.2.0\"' and restart the bot.",
                         "MISSING_VOICE_DEPENDENCY",
                     )
+                ensure_dave_compat()
             except VoiceSessionError:
                 raise
             except Exception:
