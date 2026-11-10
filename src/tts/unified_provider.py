@@ -1,6 +1,7 @@
 """Unified Text-to-Speech provider routing between gTTS and eSpeak NG with graceful fallback."""
 
 import asyncio
+from dataclasses import dataclass
 import logging
 from typing import Any, Optional
 
@@ -9,6 +10,25 @@ from .espeak_provider import AbortError, EspeakProvider
 from .gtts_provider import GTTSProvider
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SynthesizedAudio:
+    """Synthesized audio buffer paired with container format metadata."""
+
+    data: bytes
+    audio_format: str
+    filename_extension: str
+    mime_type: str
+
+
+def detect_audio_format(audio_bytes: bytes) -> str:
+    """Infers container format ('wav', 'ogg', or 'mp3') from audio magic bytes."""
+    if len(audio_bytes) >= 12 and audio_bytes[:4] == b"RIFF" and audio_bytes[8:12] == b"WAVE":
+        return "wav"
+    if len(audio_bytes) >= 4 and audio_bytes[:4] == b"OggS":
+        return "ogg"
+    return "mp3"
 
 
 class UnifiedTTSProvider:
@@ -150,6 +170,51 @@ class UnifiedTTSProvider:
                     signal=signal,
                 )
 
+    async def synthesize_audio(
+        self,
+        text: str,
+        options: Optional[dict] = None,
+        *,
+        engine: Optional[str] = None,
+        language: Optional[str] = None,
+        voice: Optional[str] = None,
+        speed: Optional[int] = None,
+        pitch: Optional[int] = None,
+        cancel_event: Optional[asyncio.Event] = None,
+        signal: Any = None,
+    ) -> SynthesizedAudio:
+        """Synthesizes text and returns audio bytes with detected container metadata."""
+        audio_bytes = await self.synthesize(
+            text,
+            options,
+            engine=engine,
+            language=language,
+            voice=voice,
+            speed=speed,
+            pitch=pitch,
+            cancel_event=cancel_event,
+            signal=signal,
+        )
+        fmt = detect_audio_format(audio_bytes)
+        mime_map = {
+            "wav": "audio/wav",
+            "ogg": "audio/ogg",
+            "mp3": "audio/mpeg",
+        }
+        return SynthesizedAudio(
+            data=audio_bytes,
+            audio_format=fmt,
+            filename_extension=fmt,
+            mime_type=mime_map.get(fmt, "audio/mpeg"),
+        )
 
-__all__ = ["UnifiedTTSProvider", "GTTSProvider", "EspeakProvider", "AbortError"]
+
+__all__ = [
+    "UnifiedTTSProvider",
+    "GTTSProvider",
+    "EspeakProvider",
+    "AbortError",
+    "SynthesizedAudio",
+    "detect_audio_format",
+]
 

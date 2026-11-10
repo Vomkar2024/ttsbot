@@ -68,31 +68,39 @@ class DiscordVoiceSession:
         if self.is_destroyed or cancel_event.is_set():
             raise AbortError("Job aborted before start")
 
-        text_to_speak = job.spoken_text or job.text
-        logger.info(
-            "[VoiceSession Guild %s] Synthesizing speech: '%s' (lang=%s, voice=%s)",
-            self.guild_id,
-            text_to_speak,
-            job.language,
-            job.voice,
-        )
+        # 1. Use pre-synthesized audio if supplied (e.g. Hinglish mode), otherwise synthesize now
+        if job.audio_bytes is not None:
+            audio_bytes = job.audio_bytes
+            logger.info(
+                "[VoiceSession Guild %s] Using pre-synthesized audio (%d bytes). Starting Discord playback...",
+                self.guild_id,
+                len(audio_bytes),
+            )
+        else:
+            text_to_speak = job.spoken_text or job.text
+            logger.info(
+                "[VoiceSession Guild %s] Synthesizing speech: '%s' (lang=%s, voice=%s)",
+                self.guild_id,
+                text_to_speak,
+                job.language,
+                job.voice,
+            )
 
-        # 1. Synthesize audio buffer via unified TTS provider
-        audio_bytes = await self.tts_provider.synthesize(
-            text=text_to_speak,
-            language=job.language,
-            voice=job.voice,
-            cancel_event=cancel_event,
-        )
+            audio_bytes = await self.tts_provider.synthesize(
+                text=text_to_speak,
+                language=job.language,
+                voice=job.voice,
+                cancel_event=cancel_event,
+            )
 
-        if cancel_event.is_set():
-            raise AbortError("Job aborted after synthesis")
+            if cancel_event.is_set():
+                raise AbortError("Job aborted after synthesis")
 
-        logger.info(
-            "[VoiceSession Guild %s] Synthesis complete (%d bytes). Starting Discord playback...",
-            self.guild_id,
-            len(audio_bytes),
-        )
+            logger.info(
+                "[VoiceSession Guild %s] Synthesis complete (%d bytes). Starting Discord playback...",
+                self.guild_id,
+                len(audio_bytes),
+            )
 
         # 2. Play audio stream through VoiceClient
         if not self.voice_client or not self.voice_client.is_connected():

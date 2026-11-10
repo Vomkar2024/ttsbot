@@ -58,6 +58,70 @@ async def handle_message_create(
 
     guild_id = str(guild.get("id") if isinstance(guild, dict) else guild.id)
 
+    channel = getattr(message, "channel", None)
+    if isinstance(message, dict):
+        channel = message.get("channel")
+    channel_id = str(channel.get("id") if isinstance(channel, dict) else getattr(channel, "id", ""))
+
+    # 2.5. Ignore command invocations (e.g. messages starting with '!' or '/')
+    content_raw = (
+        getattr(message, "content", "")
+        if not isinstance(message, dict)
+        else message.get("content", "")
+    )
+    if content_raw and content_raw.strip().startswith(("!", "/")):
+        return False
+
+    # 2.6. If Hinglish mode is enabled for this guild/channel, render English text
+    # in the channel and deliver corresponding Hindi audio (voice or attached file).
+    hinglish_service = ctx.get("hinglish_service") or ctx.get("hinglishService")
+    is_hinglish_fn = getattr(ss, "is_hinglish_enabled", None) if ss else None
+    if hinglish_service and callable(is_hinglish_fn) and is_hinglish_fn(guild_id, channel_id):
+        hinglish_cfg = ss.get_hinglish_mode(guild_id) if hasattr(ss, "get_hinglish_mode") else {}
+        delivery_mode = hinglish_cfg.get("delivery_mode", "auto")
+
+        # If Hinglish mode was enabled without a channel restriction, still scope to
+        # the configured TTS channel or active voice chat if available.
+        if not hinglish_cfg.get("channel_id"):
+            active_sess = (
+                sm.get_session(guild_id) if (sm and hasattr(sm, "get_session")) else None
+            )
+            sess_ch_id = str(getattr(active_sess, "channel_id", "") or "") if active_sess else ""
+            is_vc_chat = bool(sess_ch_id and channel_id == sess_ch_id)
+            is_cfg_ch = bool(
+                ss and hasattr(ss, "is_configured_channel") and ss.is_configured_channel(guild_id, channel_id)
+            )
+            if not is_vc_chat and not is_cfg_ch:
+                return False
+
+        member_obj = message.get("member") if isinstance(message, dict) else getattr(message, "member", None)
+        author_id = str(author.get("id") if isinstance(author, dict) else getattr(author, "id", ""))
+        author_name = (
+            getattr(member_obj, "display_name", None)
+            or getattr(author, "display_name", None)
+            or getattr(author, "name", None)
+            or (member_obj.get("displayName") if isinstance(member_obj, dict) else None)
+            or (author.get("username") if isinstance(author, dict) else None)
+            or "User"
+        )
+
+        result = await hinglish_service.process_message(
+            content_raw,
+            guild=guild,
+            member=member_obj or author,
+            text_channel=channel,
+            author_name=author_name,
+            author_id=author_id,
+            delivery_mode=delivery_mode,
+        )
+        if result.error_code == "EMPTY_TEXT":
+            return False
+
+        send_fn = getattr(channel, "send", None) if channel else None
+        if callable(send_fn):
+            await hinglish_service.send_result(send_fn, result, author_name=author_name)
+        return result.ok
+
     # 3. Check if bot has an active voice connection in this server
     if not sm:
         return False
@@ -71,11 +135,6 @@ async def handle_message_create(
         return False
 
     # 4. Verify message came from the active voice channel's text chat OR the configured TTS channel
-    channel = getattr(message, "channel", None)
-    if isinstance(message, dict):
-        channel = message.get("channel")
-    channel_id = str(channel.get("id") if isinstance(channel, dict) else getattr(channel, "id", ""))
-
     session_channel_id = str(
         getattr(session, "channel_id", getattr(session, "channelId", "")) or ""
     )
@@ -99,15 +158,6 @@ async def handle_message_create(
             channel_id,
             session_channel_id or "none",
         )
-        return False
-
-    # 4.5. Ignore command invocations (e.g. messages starting with '!' or '/')
-    content_raw = (
-        getattr(message, "content", "")
-        if not isinstance(message, dict)
-        else message.get("content", "")
-    )
-    if content_raw and content_raw.strip().startswith(("!", "/")):
         return False
 
     # Resolve author ID

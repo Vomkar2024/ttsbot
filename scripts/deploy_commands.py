@@ -12,9 +12,13 @@ if str(ROOT_DIR) not in sys.path:
 import discord  # noqa: E402
 from discord.ext import commands  # noqa: E402
 
+from src.commands.hinglish_commands import setup_hinglish_commands  # noqa: E402
 from src.commands.tts_commands import setup_tts_commands  # noqa: E402
 from src.config import load_config  # noqa: E402
+from src.hinglish.service import HinglishService  # noqa: E402
 from src.storage.settings_store import SettingsStore  # noqa: E402
+from src.translation.factory import create_translator_provider  # noqa: E402
+from src.tts.unified_provider import UnifiedTTSProvider  # noqa: E402
 from src.voice.session_manager import VoiceSessionManager  # noqa: E402
 
 config = load_config()
@@ -33,11 +37,29 @@ async def deploy() -> None:
     # Initialize mock or memory context for command definitions
     settings_store = SettingsStore(":memory:")
     session_manager = VoiceSessionManager()
+    translator = create_translator_provider(
+        config.TRANSLATOR_PROVIDER,
+        timeout=config.TRANSLATION_TIMEOUT_SEC,
+        openai_api_key=config.OPENAI_API_KEY,
+        openai_base_url=config.OPENAI_BASE_URL,
+        openai_model=config.OPENAI_MODEL,
+    )
+    hinglish_service = HinglishService(
+        translator=translator,
+        tts_provider=UnifiedTTSProvider(default_engine=config.TTS_ENGINE, tts_bin=config.TTS_BIN),
+        session_manager=session_manager,
+    )
 
     setup_tts_commands(
         bot.tree,
         session_manager=session_manager,
         settings_store=settings_store,
+    )
+    setup_hinglish_commands(
+        bot.tree,
+        hinglish_service=hinglish_service,
+        settings_store=settings_store,
+        session_manager=session_manager,
     )
 
     async with bot:

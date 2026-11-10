@@ -4,7 +4,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from ..constants import DEFAULT_LANGUAGE, DEFAULT_VOICE
 
@@ -53,6 +53,14 @@ class SettingsStore:
                     voice TEXT,
                     updated_at INTEGER,
                     PRIMARY KEY (guild_id, user_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS hinglish_settings (
+                    guild_id TEXT PRIMARY KEY,
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    channel_id TEXT,
+                    delivery_mode TEXT NOT NULL DEFAULT 'auto',
+                    updated_at INTEGER
                 );
                 """
             )
@@ -223,6 +231,64 @@ class SettingsStore:
         return {"language": language, "voice": voice}
 
     resolvePreferences = resolve_preferences
+
+    def set_hinglish_mode(
+        self,
+        guild_id: str,
+        enabled: bool,
+        *,
+        channel_id: Optional[str] = None,
+        delivery_mode: str = "auto",
+    ) -> None:
+        now = int(time.time() * 1000)
+        mode_clean = (delivery_mode or "auto").strip().lower()
+        if mode_clean not in ("auto", "voice", "file"):
+            mode_clean = "auto"
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO hinglish_settings (guild_id, enabled, channel_id, delivery_mode, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET
+                    enabled = excluded.enabled,
+                    channel_id = coalesce(excluded.channel_id, hinglish_settings.channel_id),
+                    delivery_mode = excluded.delivery_mode,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    str(guild_id),
+                    1 if enabled else 0,
+                    str(channel_id) if channel_id else None,
+                    mode_clean,
+                    now,
+                ),
+            )
+
+    def get_hinglish_mode(self, guild_id: str) -> Dict[str, Any]:
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT enabled, channel_id, delivery_mode FROM hinglish_settings WHERE guild_id = ?",
+                (str(guild_id),),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {"enabled": False, "channel_id": None, "delivery_mode": "auto"}
+            return {
+                "enabled": bool(row["enabled"]),
+                "channel_id": str(row["channel_id"]) if row["channel_id"] else None,
+                "delivery_mode": str(row["delivery_mode"] or "auto"),
+            }
+
+    def is_hinglish_enabled(self, guild_id: str, channel_id: Optional[str] = None) -> bool:
+        settings = self.get_hinglish_mode(guild_id)
+        if not settings["enabled"]:
+            return False
+        configured_channel_id = settings["channel_id"]
+        if configured_channel_id and channel_id is not None:
+            return configured_channel_id == str(channel_id)
+        return True
 
     def close(self) -> None:
         with self._lock:

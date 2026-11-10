@@ -9,6 +9,17 @@ DEFAULT_MAX_MESSAGE_CHARS = 800
 DEFAULT_VOICE_READY_TIMEOUT_MS = 15000
 DEFAULT_VOICE_DISCONNECT_GRACE_MS = 8000
 
+DEFAULT_TRANSLATOR_PROVIDER = "auto"
+DEFAULT_TRANSLATION_TIMEOUT_SEC = 10.0
+DEFAULT_TTS_TIMEOUT_SEC = 15.0
+DEFAULT_DISCORD_MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MiB standard Discord upload limit
+
+HINGLISH_DELIVERY_CHOICES = [
+    {"name": "Auto (Voice if active, else audio file)", "value": "auto"},
+    {"name": "Voice channel only", "value": "voice"},
+    {"name": "Attached audio file only", "value": "file"},
+]
+
 TTS_ENGINE_CHOICES = [
     {"name": "Google Translate TTS (Natural, recommended)", "value": "gtts"},
     {"name": "eSpeak NG (Offline/Local)", "value": "espeak"},
@@ -103,6 +114,7 @@ COMMAND_SKIP = "skip"
 COMMAND_STOP = "stop"
 COMMAND_CLEAR = "clear"
 COMMAND_STATUS = "status"
+COMMAND_HINGLISH = "hinglish"
 
 # Backwards compatibility aliases
 SUBCOMMAND_SETUP = COMMAND_SETUP

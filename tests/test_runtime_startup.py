@@ -26,13 +26,15 @@ class TestRuntimeStartup(unittest.IsolatedAsyncioTestCase):
             mock_sync.return_value = []
             await bot.setup_hook()
 
-        # Verify Cog is loaded
+        # Verify Cogs are loaded
         cog = bot.get_cog("TTS")
         self.assertIsNotNone(cog)
+        hinglish_cog = bot.get_cog("Hinglish")
+        self.assertIsNotNone(hinglish_cog)
 
-        # Verify all 10 application slash commands are loaded in the CommandTree
+        # Verify all 11 top-level application commands (10 TTS + /hinglish group) are loaded
         commands_list = bot.tree.get_commands()
-        self.assertEqual(len(commands_list), 10)
+        self.assertEqual(len(commands_list), 11)
         command_names = {c.name for c in commands_list}
         self.assertIn("join", command_names)
         self.assertIn("leave", command_names)
@@ -44,6 +46,7 @@ class TestRuntimeStartup(unittest.IsolatedAsyncioTestCase):
         self.assertIn("clear", command_names)
         self.assertIn("voice", command_names)
         self.assertIn("language", command_names)
+        self.assertIn("hinglish", command_names)
 
         # Verify graceful stop executes cleanly without blocking
         await bot.stop()

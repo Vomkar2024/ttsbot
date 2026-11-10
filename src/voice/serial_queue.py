@@ -61,6 +61,10 @@ class QueueJob:
     def user_id(self) -> str:
         return self.data.get("userId", self.data.get("user_id", ""))
 
+    @property
+    def audio_bytes(self) -> Optional[bytes]:
+        return self.data.get("audioBytes", self.data.get("audio_bytes"))
+
     def resolve(self) -> None:
         if not self.future.done():
             self.future.set_result(None)

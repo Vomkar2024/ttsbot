@@ -18,6 +18,9 @@ An independent Discord text-to-speech bot written in Python, featuring dual-engi
 | `/stop` | Cancel current speech and discard all waiting items. |
 | `/clear` | Discard waiting items without interrupting current speech. |
 | `/status` | Show active listening text channels, voice connection, active speech engine, and server defaults. |
+| `/hinglish say` | Translate a message into English text in the channel and play/attach synced Hindi speech audio. |
+| `/hinglish mode` | Enable or disable automatic Hinglish mode for incoming messages in a channel (*Manage Server required*). |
+| `/hinglish status` | Inspect Hinglish mode status, active translator layer, and voice/attachment delivery state. |
 
 ### Advanced Voice & Chat Intelligence (matching Discord-TTS/Bot)
 - **Natural Speech & Dual-Engine Fallback**: Default to **gTTS** for realistic, fluent voices with automatic fallback to **eSpeak NG**.
@@ -141,6 +144,7 @@ espeak-ng --version
    - `View Channels`
    - `Read Message History`
    - `Send Messages`
+   - `Attach Files` *(required for Hinglish audio file fallback when no voice channel is active)*
    - `Connect`
    - `Speak`
 8. Open the generated invite URL and add the bot to your test server.
@@ -213,6 +217,14 @@ The included [`nixpacks.toml`](file:///e:/Download/Omkar/botmaker/tts/nixpacks.t
 3. Any message typed into the configured text channel will be spoken in the voice channel.
 4. When finished, run `/leave`.
 
+### Using Hinglish Mode (English Text + Hindi Speech)
+1. **On-demand command**: Run `/hinglish say text:"Bhai aaj meeting 5 baje hai"` in any channel:
+   - The bot posts the English meaning in the channel (`"Brother, today's meeting is at 5 o'clock"`).
+   - If you are in a voice channel (or the bot has an active voice session), it joins and speaks the corresponding Hindi audio there.
+   - If no voice channel is active, it attaches the synthesized Hindi audio file (`.mp3` / `.wav`) directly to the message.
+2. **Automatic channel mode**: A server manager runs `/hinglish mode enabled:True` in a channel so every incoming message automatically outputs English text in chat and plays/attaches synced Hindi audio.
+3. Run `/hinglish status` to check active channel settings, translator backend, and voice state.
+
 ---
 
 ## Environment Variables
@@ -230,6 +242,13 @@ The included [`nixpacks.toml`](file:///e:/Download/Omkar/botmaker/tts/nixpacks.t
 | `MAX_MESSAGE_CHARS` | No | `800` | Maximum message characters sent to the local TTS engine. |
 | `VOICE_READY_TIMEOUT_MS` | No | `15000` | Time to wait for a voice connection to become ready. |
 | `VOICE_DISCONNECT_GRACE_MS` | No | `8000` | Grace period for temporary voice disconnects before cleanup. |
+| `TRANSLATOR_PROVIDER` | No | `auto` | Hinglish translator (`auto`, `google`, or `openai`). |
+| `TRANSLATION_TIMEOUT_SEC` | No | `10.0` | Timeout in seconds for Hinglish translation requests. |
+| `TTS_TIMEOUT_SEC` | No | `15.0` | Timeout in seconds for Hindi audio synthesis in Hinglish mode. |
+| `MAX_AUDIO_FILE_BYTES` | No | `10485760` | Maximum audio attachment size in bytes (also bounded by server limit). |
+| `OPENAI_API_KEY` | No | *empty* | Optional OpenAI-compatible API key for idiomatic Romanized Hinglish translation. |
+| `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | Optional OpenAI-compatible API base URL. |
+| `OPENAI_MODEL` | No | `gpt-4o-mini` | Model name when `TRANSLATOR_PROVIDER=openai`. |
 
 ---
 

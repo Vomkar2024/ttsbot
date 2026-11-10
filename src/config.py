@@ -7,7 +7,11 @@ from typing import Mapping, Optional
 from dotenv import load_dotenv
 
 from .constants import (
+    DEFAULT_DISCORD_MAX_FILE_BYTES,
     DEFAULT_LANGUAGE,
+    DEFAULT_TRANSLATION_TIMEOUT_SEC,
+    DEFAULT_TRANSLATOR_PROVIDER,
+    DEFAULT_TTS_TIMEOUT_SEC,
     DEFAULT_VOICE,
     DEFAULT_TTS_ENGINE,
     DEFAULT_SPEAKER_COOLDOWN_SEC,
@@ -15,6 +19,10 @@ from .constants import (
     DEFAULT_MAX_MESSAGE_CHARS,
     DEFAULT_VOICE_READY_TIMEOUT_MS,
     DEFAULT_VOICE_DISCONNECT_GRACE_MS,
+)
+from .translation.openai_translator_provider import (
+    DEFAULT_OPENAI_BASE_URL,
+    DEFAULT_OPENAI_MODEL,
 )
 
 load_dotenv()
@@ -40,6 +48,13 @@ class Config:
         default_voice: str = DEFAULT_VOICE,
         announce_links: bool = True,
         gtts_timeout_sec: float = 5.0,
+        translator_provider: str = DEFAULT_TRANSLATOR_PROVIDER,
+        translation_timeout_sec: float = DEFAULT_TRANSLATION_TIMEOUT_SEC,
+        tts_timeout_sec: float = DEFAULT_TTS_TIMEOUT_SEC,
+        max_audio_file_bytes: int = DEFAULT_DISCORD_MAX_FILE_BYTES,
+        openai_api_key: str = "",
+        openai_base_url: str = DEFAULT_OPENAI_BASE_URL,
+        openai_model: str = DEFAULT_OPENAI_MODEL,
     ):
         self.DISCORD_TOKEN = discord_token
         self.DISCORD_CLIENT_ID = discord_client_id
@@ -58,6 +73,13 @@ class Config:
         self.DEFAULT_VOICE = default_voice
         self.ANNOUNCE_LINKS = announce_links
         self.GTTS_TIMEOUT_SEC = gtts_timeout_sec
+        self.TRANSLATOR_PROVIDER = translator_provider
+        self.TRANSLATION_TIMEOUT_SEC = translation_timeout_sec
+        self.TTS_TIMEOUT_SEC = tts_timeout_sec
+        self.MAX_AUDIO_FILE_BYTES = max_audio_file_bytes
+        self.OPENAI_API_KEY = openai_api_key
+        self.OPENAI_BASE_URL = openai_base_url
+        self.OPENAI_MODEL = openai_model
 
     @property
     def voice_ready_timeout_sec(self) -> float:
@@ -170,6 +192,21 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
     )
     announce_links = _parse_bool(source.get("ANNOUNCE_LINKS"), True)
     gtts_timeout_sec = _parse_float(source.get("GTTS_TIMEOUT_SEC"), 5.0)
+    translator_provider = (
+        _clean_str(source.get("TRANSLATOR_PROVIDER")).lower() or DEFAULT_TRANSLATOR_PROVIDER
+    )
+    translation_timeout_sec = _parse_float(
+        source.get("TRANSLATION_TIMEOUT_SEC"), DEFAULT_TRANSLATION_TIMEOUT_SEC
+    )
+    tts_timeout_sec = _parse_float(source.get("TTS_TIMEOUT_SEC"), DEFAULT_TTS_TIMEOUT_SEC)
+    max_audio_file_bytes = _parse_num(
+        source.get("MAX_AUDIO_FILE_BYTES"),
+        DEFAULT_DISCORD_MAX_FILE_BYTES,
+        min_val=1024,
+    )
+    openai_api_key = _clean_str(source.get("OPENAI_API_KEY"))
+    openai_base_url = _clean_str(source.get("OPENAI_BASE_URL")) or DEFAULT_OPENAI_BASE_URL
+    openai_model = _clean_str(source.get("OPENAI_MODEL")) or DEFAULT_OPENAI_MODEL
 
     return Config(
         discord_token=raw_token,
@@ -189,6 +226,13 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
         default_voice=DEFAULT_VOICE,
         announce_links=announce_links,
         gtts_timeout_sec=gtts_timeout_sec,
+        translator_provider=translator_provider,
+        translation_timeout_sec=translation_timeout_sec,
+        tts_timeout_sec=tts_timeout_sec,
+        max_audio_file_bytes=max_audio_file_bytes,
+        openai_api_key=openai_api_key,
+        openai_base_url=openai_base_url,
+        openai_model=openai_model,
     )
 
 

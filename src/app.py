@@ -9,10 +9,13 @@ from typing import Optional
 import discord
 from discord.ext import commands
 
+from .commands.hinglish_commands import HinglishCommandsCog
 from .commands.tts_commands import TTSCommandsCog
 from .config import Config, default_config
 from .events.message_handler import handle_message_create
+from .hinglish.service import HinglishService
 from .storage.settings_store import SettingsStore
+from .translation.factory import create_translator_provider
 from .tts.format_message import SpeakerCooldownTracker
 from .tts.unified_provider import UnifiedTTSProvider
 from .voice.session_manager import VoiceSessionManager
@@ -44,6 +47,7 @@ class TTSBot(commands.Bot):
         self.tts_provider = UnifiedTTSProvider(
             default_engine=self.cfg.TTS_ENGINE,
             tts_bin=self.cfg.TTS_BIN,
+            options={"gtts_timeout_sec": self.cfg.GTTS_TIMEOUT_SEC},
         )
         self.espeak_provider = self.tts_provider  # Alias
         self.speaker_cooldown_tracker = SpeakerCooldownTracker(
@@ -56,6 +60,22 @@ class TTSBot(commands.Bot):
             max_queue_size=self.cfg.MAX_QUEUE_SIZE,
             ffmpeg_path=self.cfg.FFMPEG_PATH,
         )
+        self.translator = create_translator_provider(
+            self.cfg.TRANSLATOR_PROVIDER,
+            timeout=self.cfg.TRANSLATION_TIMEOUT_SEC,
+            openai_api_key=self.cfg.OPENAI_API_KEY,
+            openai_base_url=self.cfg.OPENAI_BASE_URL,
+            openai_model=self.cfg.OPENAI_MODEL,
+        )
+        self.hinglish_service = HinglishService(
+            translator=self.translator,
+            tts_provider=self.tts_provider,
+            session_manager=self.session_manager,
+            translation_timeout_sec=self.cfg.TRANSLATION_TIMEOUT_SEC,
+            tts_timeout_sec=self.cfg.TTS_TIMEOUT_SEC,
+            max_audio_file_bytes=self.cfg.MAX_AUDIO_FILE_BYTES,
+            max_chars=self.cfg.MAX_MESSAGE_CHARS,
+        )
 
         self.context = {
             "settingsStore": self.settings_store,
@@ -63,12 +83,15 @@ class TTSBot(commands.Bot):
             "espeakProvider": self.tts_provider,
             "ttsProvider": self.tts_provider,
             "speakerCooldownTracker": self.speaker_cooldown_tracker,
+            "hinglishService": self.hinglish_service,
+            "translator": self.translator,
             "config": self.cfg,
             "settings_store": self.settings_store,
             "session_manager": self.session_manager,
             "espeak_provider": self.tts_provider,
             "tts_provider": self.tts_provider,
             "speaker_cooldown_tracker": self.speaker_cooldown_tracker,
+            "hinglish_service": self.hinglish_service,
         }
 
     async def setup_hook(self) -> None:
@@ -77,6 +100,14 @@ class TTSBot(commands.Bot):
                 self,
                 session_manager=self.session_manager,
                 settings_store=self.settings_store,
+            )
+        )
+        await self.add_cog(
+            HinglishCommandsCog(
+                self,
+                hinglish_service=self.hinglish_service,
+                settings_store=self.settings_store,
+                session_manager=self.session_manager,
             )
         )
 
