@@ -2,7 +2,11 @@
 
 DEFAULT_LANGUAGE = "en"
 DEFAULT_VOICE = "default"
-DEFAULT_TTS_ENGINE = "gtts"
+DEFAULT_TTS_ENGINE = "edge-tts"
+DEFAULT_EDGE_TTS_VOICE = "en-US-EmmaMultilingualNeural"
+DEFAULT_EDGE_TTS_RATE = "+0%"
+DEFAULT_EDGE_TTS_PITCH = "+0Hz"
+DEFAULT_EDGE_TTS_TIMEOUT_SEC = 10.0
 DEFAULT_SPEAKER_COOLDOWN_SEC = 60
 DEFAULT_MAX_QUEUE_SIZE = 50
 DEFAULT_MAX_MESSAGE_CHARS = 800
@@ -21,7 +25,8 @@ HINGLISH_DELIVERY_CHOICES = [
 ]
 
 TTS_ENGINE_CHOICES = [
-    {"name": "Google Translate TTS (Natural, recommended)", "value": "gtts"},
+    {"name": "Edge Neural TTS (Custom Voice Pack, recommended)", "value": "edge-tts"},
+    {"name": "Google Translate TTS (Natural)", "value": "gtts"},
     {"name": "eSpeak NG (Offline/Local)", "value": "espeak"},
 ]
 
@@ -84,6 +89,14 @@ LANGUAGE_CHOICES = [
 
 VOICE_VARIANT_CHOICES = [
     {"name": "Default voice", "value": "default"},
+    {"name": "Emma US Neural (Edge-TTS)", "value": "edge:en-US-EmmaMultilingualNeural"},
+    {"name": "Brian US Male (Edge-TTS)", "value": "edge:en-US-BrianMultilingualNeural"},
+    {"name": "Aria US Female (Edge-TTS)", "value": "edge:en-US-AriaNeural"},
+    {"name": "Sonia UK Female (Edge-TTS)", "value": "edge:en-GB-SoniaNeural"},
+    {"name": "Ryan UK Male (Edge-TTS)", "value": "edge:en-GB-RyanNeural"},
+    {"name": "Swara India Hindi (Edge-TTS)", "value": "edge:hi-IN-SwaraNeural"},
+    {"name": "Neerja India English (Edge-TTS)", "value": "edge:en-IN-NeerjaNeural"},
+    {"name": "Nanami Japanese (Edge-TTS)", "value": "edge:ja-JP-NanamiNeural"},
     {"name": "US Natural (gTTS)", "value": "us"},
     {"name": "UK Natural (gTTS)", "value": "uk"},
     {"name": "Australia Natural (gTTS)", "value": "au"},

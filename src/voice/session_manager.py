@@ -1,9 +1,10 @@
 """Voice session manager handling per-guild concurrency serialization, channel moves, and lifecycle."""
-import shutil
-import os
 import asyncio
 import inspect
 import logging
+import os
+import shutil
+import time
 from typing import Any, Dict, Optional
 
 import discord
@@ -14,33 +15,53 @@ from ..constants import (
     DEFAULT_VOICE_READY_TIMEOUT_MS,
 )
 from ..tts.unified_provider import UnifiedTTSProvider
-from .dave_compat import ensure_dave_compat
+from .dave_compat import (
+    ensure_dave_compat,
+    ensure_opus_loaded,
+    inspect_voice_connection_state,
+)
 from .discord_voice_session import DiscordVoiceSession
 
 logger = logging.getLogger(__name__)
 
-def resolve_ffmpeg_path(configured="ffmpeg"):
-    # First try system FFmpeg
-    system_ffmpeg = shutil.which(configured)
 
+def resolve_ffmpeg_path(configured: str = "ffmpeg") -> str:
+    """Resolves a usable FFmpeg executable with system PATH and imageio-ffmpeg fallbacks."""
+    target = (configured or "ffmpeg").strip() or "ffmpeg"
+
+    # First try resolving configured command on PATH
+    system_ffmpeg = shutil.which(target)
     if system_ffmpeg:
         return system_ffmpeg
 
-    # Fall back to bundled FFmpeg
+    # Check explicit path on disk if path separators were given
+    if ("/" in target or "\\" in target) and os.path.isfile(target):
+        return target
+
+    # Cross-platform safety: if configured path was e.g. a Windows path on Linux, try PATH 'ffmpeg'
+    if target != "ffmpeg":
+        default_path_ffmpeg = shutil.which("ffmpeg")
+        if default_path_ffmpeg:
+            logger.warning(
+                "[FFmpeg] Configured path '%s' was not found; falling back to PATH ffmpeg: %s",
+                target,
+                default_path_ffmpeg,
+            )
+            return default_path_ffmpeg
+
+    # Fall back to bundled FFmpeg from imageio-ffmpeg wheel
     try:
         import imageio_ffmpeg
 
         bundled = imageio_ffmpeg.get_ffmpeg_exe()
-
         if bundled and os.path.isfile(bundled):
-            logger.info("Using bundled FFmpeg: %s", bundled)
+            logger.info("[FFmpeg] Using bundled imageio-ffmpeg executable: %s", bundled)
             return bundled
+    except Exception as err:
+        logger.debug("[FFmpeg] Could not load bundled imageio-ffmpeg: %s", err)
 
-    except Exception:
-        logger.exception("Could not load bundled FFmpeg")
-
-    logger.error("FFmpeg executable not found!")
-    return configured
+    logger.error("[FFmpeg] FFmpeg executable not found (configured='%s')!", target)
+    return target
 
 class VoiceSessionError(Exception):
     def __init__(self, message: str, code: str):
@@ -193,11 +214,23 @@ class VoiceSessionManager:
                         "davey library needed in order to use voice. Install it via 'pip install \"davey>=0.1.7,<0.2.0\"' and restart the bot.",
                         "MISSING_VOICE_DEPENDENCY",
                     )
-                ensure_dave_compat()
+                compat_res = ensure_dave_compat()
+                logger.debug("[VoiceSessionManager Guild %s] DAVE compat check: %s", guild_id, compat_res)
+                if not ensure_opus_loaded():
+                    logger.error(
+                        "[VoiceSessionManager Guild %s] Native libopus library is NOT loaded! "
+                        "Playback will fail unless libopus0 (Linux) or bundled Opus DLL (Windows) is present.",
+                        guild_id,
+                    )
             except VoiceSessionError:
                 raise
-            except Exception:
-                pass
+            except Exception as dep_err:
+                logger.warning(
+                    "[VoiceSessionManager Guild %s] Voice dependency/DAVE check raised warning: %s",
+                    guild_id,
+                    dep_err,
+                    exc_info=True,
+                )
 
             # Determine whether we can seamlessly move an active voice connection
             existing_vc = getattr(existing, "voice_client", None) if existing else getattr(guild, "voice_client", None)
@@ -218,8 +251,15 @@ class VoiceSessionManager:
                             await res
                     if existing:
                         existing.channel_id = str(voice_channel.id)
-                        if hasattr(existing, "queue") and hasattr(existing.queue, "clear"):
+                        if hasattr(existing, "serial_queue") and hasattr(existing.serial_queue, "clear"):
+                            existing.serial_queue.clear()
+                        elif hasattr(existing, "queue") and hasattr(existing.queue, "clear"):
                             existing.queue.clear()
+                        logger.info(
+                            "[VoiceSessionManager Guild %s] Moved active voice session to channel %s.",
+                            guild_id,
+                            voice_channel.id,
+                        )
                         return {"session": existing, "reused": True, "moved": True}
                     voice_client = existing_vc
                 except Exception as err:
@@ -244,6 +284,7 @@ class VoiceSessionManager:
                 voice_client = None
 
             if voice_client is None:
+                connect_t0 = time.monotonic()
                 try:
                     conn_res = voice_channel.connect(
                         timeout=self.ready_timeout_sec,
@@ -254,10 +295,41 @@ class VoiceSessionManager:
                     else:
                         voice_client = conn_res
                 except Exception as err:
+                    logger.error(
+                        "[VoiceSessionManager Guild %s] Voice connect to channel %s failed: %s",
+                        guild_id,
+                        voice_channel.id,
+                        err,
+                        exc_info=True,
+                    )
                     raise VoiceSessionError(
                         f"Failed to establish voice connection within {self.ready_timeout_ms}ms: {err}",
                         "CONNECTION_TIMEOUT",
                     ) from err
+
+                conn_ms = (time.monotonic() - connect_t0) * 1000.0
+                # Wait briefly for DAVE MLS handshake if running against a live Discord voice connection
+                raw_conn = getattr(voice_client, "_connection", None)
+                if raw_conn is not None and hasattr(raw_conn, "ws"):
+                    wait_deadline = time.monotonic() + 1.5
+                    while time.monotonic() < wait_deadline:
+                        diag_now = inspect_voice_connection_state(voice_client)
+                        if not diag_now:
+                            break
+                        dave_ver = diag_now.get("dave_protocol_version") or 0
+                        if dave_ver == 0 or diag_now.get("can_encrypt") is True:
+                            break
+                        await asyncio.sleep(0.05)
+
+                diag_after = inspect_voice_connection_state(voice_client)
+                logger.info(
+                    "[VoiceSessionManager Guild %s] Connected to voice channel %s in %.0fms | FFmpeg='%s' | Transport=%s",
+                    guild_id,
+                    voice_channel.id,
+                    conn_ms,
+                    self.ffmpeg_path,
+                    diag_after,
+                )
 
             session = DiscordVoiceSession(
                 guild_id=guild_id,

@@ -247,12 +247,16 @@ async def handle_message_create(
             }
         )
         logger.info(
-            "[MessageCreate Guild %s] Enqueued speech for %s: '%s' (lang=%s, voice=%s)",
+            "[Stage 1/6: Text Received] [MessageCreate Guild %s] Enqueued speech "
+            "(channel=#%s/%s, author=%s, chars=%d, lang=%s, voice=%s): \"%s\"",
             guild_id,
+            getattr(channel, "name", channel_id),
+            channel_id,
             formatted.author_name,
-            formatted.spoken_text,
+            len(formatted.spoken_text),
             language,
             voice,
+            formatted.spoken_text,
         )
         return True
     except QueueFullError:

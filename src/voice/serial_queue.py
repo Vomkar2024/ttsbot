@@ -291,10 +291,11 @@ class SerialQueue:
                         self.current_job.reject(abort_err)
                     else:
                         logger.error(
-                            "[SerialQueue Guild %s] Job #%s error: %s",
+                            "[SerialQueue Guild %s] Job #%s failed: %s",
                             self.guild_id,
                             self.current_job.id,
                             err,
+                            exc_info=True,
                         )
                         self.current_job.reject(err)
                 finally:

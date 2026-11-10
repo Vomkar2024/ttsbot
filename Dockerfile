@@ -4,15 +4,18 @@ FROM python:3.12-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    TTS_ENGINE=edge-tts \
     TTS_BIN=espeak-ng \
     FFMPEG_PATH=ffmpeg \
     DATABASE_PATH=/app/data/tts.sqlite
 
-# Install required system binaries: eSpeak NG and FFmpeg
+# Install required system binaries: eSpeak NG, FFmpeg, Opus, libsodium, and Git
 RUN apt-get update && apt-get install -y --no-install-recommends \
     espeak-ng \
     ffmpeg \
+    libopus0 \
     libsodium23 \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory

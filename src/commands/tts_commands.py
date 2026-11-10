@@ -168,10 +168,10 @@ def setup_tts_commands(
 
     @tree.command(
         name=COMMAND_VOICE,
-        description="Select an eSpeak voice variant for yourself, or set the server default",
+        description="Select a voice pack (Edge Neural, gTTS, or eSpeak) for yourself or the server",
     )
     @app_commands.describe(
-        variant="eSpeak voice variant to use",
+        variant="Voice pack or accent to use (Edge Neural, gTTS, or eSpeak)",
         server="Apply as server-wide default instead of personal override (Manage Server required)",
     )
     @app_commands.choices(variant=VOICE_APP_CHOICES)
@@ -433,8 +433,15 @@ def setup_tts_commands(
         )
 
         provider = getattr(session_manager, "tts_provider", None)
-        default_eng = getattr(provider, "default_engine", "gtts") if provider else "gtts"
-        engine_label = "Google Translate TTS (Natural)" if default_eng == "gtts" else "eSpeak NG (Offline)"
+        default_eng = getattr(provider, "default_engine", "edge-tts") if provider else "edge-tts"
+        edge_obj = getattr(provider, "edge_tts", None) if provider else None
+        edge_default_voice = getattr(edge_obj, "default_voice", "en-US-EmmaMultilingualNeural")
+        if default_eng == "edge-tts":
+            engine_label = f"Edge Neural TTS ({edge_default_voice})"
+        elif default_eng == "gtts":
+            engine_label = "Google Translate TTS (Natural)"
+        else:
+            engine_label = "eSpeak NG (Offline)"
         embed.add_field(
             name="Speech Engine",
             value=f"⚡ `{engine_label}`",

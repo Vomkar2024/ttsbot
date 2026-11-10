@@ -1,25 +1,37 @@
-"""Unified Text-to-Speech provider routing between gTTS and eSpeak NG with graceful fallback."""
+"""Unified Text-to-Speech provider routing between Edge-TTS, gTTS, and eSpeak NG with graceful fallback."""
 
 import asyncio
 from dataclasses import dataclass
 import logging
-from typing import Any, Optional
+from typing import Any, List, Optional
 
-from ..constants import DEFAULT_LANGUAGE, DEFAULT_TTS_ENGINE, DEFAULT_VOICE
+from ..constants import (
+    DEFAULT_EDGE_TTS_PITCH,
+    DEFAULT_EDGE_TTS_RATE,
+    DEFAULT_EDGE_TTS_TIMEOUT_SEC,
+    DEFAULT_EDGE_TTS_VOICE,
+    DEFAULT_LANGUAGE,
+    DEFAULT_TTS_ENGINE,
+    DEFAULT_VOICE,
+)
+from .edge_tts_provider import EdgeTTSProvider
 from .espeak_provider import AbortError, EspeakProvider
-from .gtts_provider import GTTSProvider
+from .gtts_provider import ACCENT_TLDS, GTTSProvider
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class SynthesizedAudio:
-    """Synthesized audio buffer paired with container format metadata."""
+    """Synthesized audio buffer paired with container format and synthesis provenance."""
 
     data: bytes
     audio_format: str
     filename_extension: str
     mime_type: str
+    engine: str = ""
+    voice_used: str = ""
+    fallback_from: Optional[str] = None
 
 
 def detect_audio_format(audio_bytes: bytes) -> str:
@@ -31,8 +43,21 @@ def detect_audio_format(audio_bytes: bytes) -> str:
     return "mp3"
 
 
+def normalize_engine_name(engine: Optional[str]) -> str:
+    """Normalizes configured engine aliases to canonical names ('edge-tts', 'gtts', 'espeak')."""
+    raw = (engine or DEFAULT_TTS_ENGINE).strip().lower()
+    if raw in ("edge", "edge-tts", "edge_tts", "edgetts", "custom"):
+        return "edge-tts"
+    if raw in ("gtts", "google"):
+        return "gtts"
+    if raw in ("espeak", "espeak-ng", "espeak_ng"):
+        return "espeak"
+    logger.warning("[UnifiedTTSProvider] Unknown TTS engine '%s'; defaulting to 'edge-tts'.", engine)
+    return "edge-tts"
+
+
 class UnifiedTTSProvider:
-    """Multi-engine TTS provider managing gTTS and eSpeak NG with auto-fallback."""
+    """Multi-engine TTS provider managing Edge-TTS custom voice pack, gTTS, and eSpeak NG with auto-fallback."""
 
     def __init__(
         self,
@@ -42,11 +67,33 @@ class UnifiedTTSProvider:
         options: Optional[dict] = None,
     ):
         opts = options or {}
-        self.default_engine = opts.get("defaultEngine", opts.get("default_engine", default_engine)).lower()
-        self.allow_mock_fallback = opts.get(
-            "allowMockFallback", opts.get("allow_mock_fallback", allow_mock_fallback)
+        raw_default = opts.get("defaultEngine", opts.get("default_engine", default_engine))
+        self.default_engine = normalize_engine_name(raw_default)
+        self.allow_mock_fallback = bool(
+            opts.get("allowMockFallback", opts.get("allow_mock_fallback", allow_mock_fallback))
         )
 
+        self.edge_tts = EdgeTTSProvider(
+            default_voice=str(
+                opts.get("edgeTtsVoice", opts.get("edge_tts_voice", DEFAULT_EDGE_TTS_VOICE))
+                or DEFAULT_EDGE_TTS_VOICE
+            ),
+            default_rate=str(
+                opts.get("edgeTtsRate", opts.get("edge_tts_rate", DEFAULT_EDGE_TTS_RATE))
+                or DEFAULT_EDGE_TTS_RATE
+            ),
+            default_pitch=str(
+                opts.get("edgeTtsPitch", opts.get("edge_tts_pitch", DEFAULT_EDGE_TTS_PITCH))
+                or DEFAULT_EDGE_TTS_PITCH
+            ),
+            timeout=float(
+                opts.get(
+                    "edgeTtsTimeoutSec",
+                    opts.get("edge_tts_timeout_sec", DEFAULT_EDGE_TTS_TIMEOUT_SEC),
+                )
+            ),
+            allow_mock_fallback=self.allow_mock_fallback,
+        )
         self.gtts = GTTSProvider(
             allow_mock_fallback=self.allow_mock_fallback,
             timeout=float(opts.get("gtts_timeout_sec", opts.get("timeout", 5.0))),
@@ -85,13 +132,191 @@ class UnifiedTTSProvider:
     # Alias camelCase
     resolveVoiceArg = resolve_voice_arg
 
+    def resolve_selection(
+        self,
+        *,
+        engine: Optional[str] = None,
+        language: Optional[str] = DEFAULT_LANGUAGE,
+        voice: Optional[str] = DEFAULT_VOICE,
+    ) -> dict:
+        """Determines primary engine, ordered fallbacks, and resolved voice identifier."""
+        lang_clean = (language or DEFAULT_LANGUAGE).strip() or DEFAULT_LANGUAGE
+        voice_clean = (voice or DEFAULT_VOICE).strip() or DEFAULT_VOICE
+        voice_lower = voice_clean.lower()
+
+        if engine:
+            primary = normalize_engine_name(engine)
+        elif voice_lower.startswith("edge:") or (voice_lower.endswith("neural") and "-" in voice_clean):
+            primary = "edge-tts"
+        elif voice_clean.startswith("+"):
+            primary = "espeak"
+        elif voice_lower in ACCENT_TLDS or voice_lower.startswith("tld:"):
+            primary = "gtts"
+        else:
+            primary = self.default_engine
+
+        if primary == "edge-tts":
+            order = ["edge-tts", "gtts", "espeak"]
+            resolved_voice = self.edge_tts.resolve_voice(lang_clean, voice_clean)
+        elif primary == "gtts":
+            order = ["gtts", "espeak", "edge-tts"]
+            g_lang, g_tld = self.gtts.resolve_params(lang_clean, voice_clean)
+            resolved_voice = f"{g_lang} (tld={g_tld})"
+        else:
+            order = ["espeak", "gtts", "edge-tts"]
+            resolved_voice = self.espeak.resolve_voice_arg(lang_clean, voice_clean)
+
+        return {
+            "primary_engine": primary,
+            "engine_order": order,
+            "resolved_voice": resolved_voice,
+            "language": lang_clean,
+            "voice_preference": voice_clean,
+        }
+
+    def _describe_voice_for_engine(
+        self,
+        engine_name: str,
+        language: Optional[str],
+        voice: Optional[str],
+    ) -> str:
+        lang_clean = (language or DEFAULT_LANGUAGE).strip() or DEFAULT_LANGUAGE
+        voice_clean = (voice or DEFAULT_VOICE).strip() or DEFAULT_VOICE
+        if engine_name == "edge-tts":
+            return self.edge_tts.resolve_voice(lang_clean, voice_clean)
+        if engine_name == "gtts":
+            g_lang, g_tld = self.gtts.resolve_params(lang_clean, voice_clean)
+            return f"{g_lang} (tld={g_tld})"
+        return self.espeak.resolve_voice_arg(lang_clean, voice_clean)
+
     async def is_available(self) -> bool:
         """Returns True if at least one TTS engine is operational."""
+        edge_ok = await self.edge_tts.is_available()
         gtts_ok = await self.gtts.is_available()
         espeak_ok = await self.espeak.is_available()
-        return gtts_ok or espeak_ok
+        return edge_ok or gtts_ok or espeak_ok
 
     isAvailable = is_available
+
+    async def _synthesize_with_engine(
+        self,
+        engine_name: str,
+        text: str,
+        options: Optional[dict],
+        *,
+        language: Optional[str],
+        voice: Optional[str],
+        speed: Optional[int],
+        pitch: Optional[int],
+        cancel_event: Optional[asyncio.Event],
+        signal: Any,
+    ) -> bytes:
+        if engine_name == "edge-tts":
+            return await self.edge_tts.synthesize(
+                text,
+                options,
+                language=language,
+                voice=voice,
+                speed=speed,
+                pitch=pitch,
+                cancel_event=cancel_event,
+                signal=signal,
+            )
+        if engine_name == "gtts":
+            return await self.gtts.synthesize(
+                text,
+                options,
+                language=language,
+                voice=voice,
+                speed=speed,
+                pitch=pitch,
+                cancel_event=cancel_event,
+                signal=signal,
+            )
+        return await self.espeak.synthesize(
+            text,
+            options,
+            language=language,
+            voice=voice,
+            speed=speed,
+            pitch=pitch,
+            cancel_event=cancel_event,
+            signal=signal,
+        )
+
+    async def _synthesize_internal(
+        self,
+        text: str,
+        options: Optional[dict] = None,
+        *,
+        engine: Optional[str] = None,
+        language: Optional[str] = None,
+        voice: Optional[str] = None,
+        speed: Optional[int] = None,
+        pitch: Optional[int] = None,
+        cancel_event: Optional[asyncio.Event] = None,
+        signal: Any = None,
+    ) -> tuple[bytes, str, str, Optional[str]]:
+        opts = options or {}
+        explicit_engine = engine or opts.get("engine")
+        selection = self.resolve_selection(
+            engine=explicit_engine,
+            language=language,
+            voice=voice,
+        )
+        engine_order: List[str] = selection["engine_order"]
+        primary_engine = selection["primary_engine"]
+
+        last_err: Optional[Exception] = None
+        for idx, candidate in enumerate(engine_order):
+            # When falling back away from an engine-specific voice tag (e.g. "+klatt" or "edge:..."),
+            # keep language cleanly and pass voice="default" on fallback engines if incompatible.
+            eff_voice = voice
+            if idx > 0 and voice:
+                v_str = voice.strip()
+                if candidate != "espeak" and v_str.startswith("+"):
+                    eff_voice = "default"
+                elif candidate != "edge-tts" and (
+                    v_str.lower().startswith("edge:") or v_str.lower().endswith("neural")
+                ):
+                    eff_voice = "default"
+
+            try:
+                audio_bytes = await self._synthesize_with_engine(
+                    candidate,
+                    text,
+                    options,
+                    language=language,
+                    voice=eff_voice,
+                    speed=speed,
+                    pitch=pitch,
+                    cancel_event=cancel_event,
+                    signal=signal,
+                )
+                if not audio_bytes:
+                    raise RuntimeError(f"Engine '{candidate}' returned empty audio buffer (0 bytes)")
+
+                voice_used = self._describe_voice_for_engine(candidate, language, eff_voice)
+                fallback_from = primary_engine if idx > 0 else None
+                return audio_bytes, candidate, voice_used, fallback_from
+            except AbortError:
+                raise
+            except ValueError:
+                # Input validation error (e.g. blank text) should fail immediately, not loop fallbacks
+                raise
+            except Exception as err:
+                last_err = err
+                if idx + 1 < len(engine_order):
+                    next_eng = engine_order[idx + 1]
+                    logger.warning(
+                        "[UnifiedTTSProvider] %s synthesis failed (%s). Falling back to %s...",
+                        candidate,
+                        err,
+                        next_eng,
+                    )
+
+        assert last_err is not None
+        raise last_err
 
     async def synthesize(
         self,
@@ -107,68 +332,18 @@ class UnifiedTTSProvider:
         signal: Any = None,
     ) -> bytes:
         """Synthesizes text using the designated engine, falling back automatically if an error occurs."""
-        opts = options or {}
-        target_engine = (engine or opts.get("engine") or self.default_engine).lower()
-
-        if target_engine in ("gtts", "google"):
-            try:
-                return await self.gtts.synthesize(
-                    text,
-                    options,
-                    language=language,
-                    voice=voice,
-                    speed=speed,
-                    pitch=pitch,
-                    cancel_event=cancel_event,
-                    signal=signal,
-                )
-            except AbortError:
-                raise
-            except Exception as err:
-                logger.warning(
-                    "[UnifiedTTSProvider] gTTS synthesis failed (%s). Falling back to eSpeak NG...",
-                    err,
-                )
-                return await self.espeak.synthesize(
-                    text,
-                    options,
-                    language=language,
-                    voice=voice,
-                    speed=speed,
-                    pitch=pitch,
-                    cancel_event=cancel_event,
-                    signal=signal,
-                )
-        else:
-            # eSpeak NG primary
-            try:
-                return await self.espeak.synthesize(
-                    text,
-                    options,
-                    language=language,
-                    voice=voice,
-                    speed=speed,
-                    pitch=pitch,
-                    cancel_event=cancel_event,
-                    signal=signal,
-                )
-            except AbortError:
-                raise
-            except Exception as err:
-                logger.warning(
-                    "[UnifiedTTSProvider] eSpeak synthesis failed (%s). Falling back to gTTS...",
-                    err,
-                )
-                return await self.gtts.synthesize(
-                    text,
-                    options,
-                    language=language,
-                    voice=voice,
-                    speed=speed,
-                    pitch=pitch,
-                    cancel_event=cancel_event,
-                    signal=signal,
-                )
+        audio_bytes, _, _, _ = await self._synthesize_internal(
+            text,
+            options,
+            engine=engine,
+            language=language,
+            voice=voice,
+            speed=speed,
+            pitch=pitch,
+            cancel_event=cancel_event,
+            signal=signal,
+        )
+        return audio_bytes
 
     async def synthesize_audio(
         self,
@@ -183,8 +358,8 @@ class UnifiedTTSProvider:
         cancel_event: Optional[asyncio.Event] = None,
         signal: Any = None,
     ) -> SynthesizedAudio:
-        """Synthesizes text and returns audio bytes with detected container metadata."""
-        audio_bytes = await self.synthesize(
+        """Synthesizes text and returns audio bytes with detected container and provenance metadata."""
+        audio_bytes, used_engine, used_voice, fallback_from = await self._synthesize_internal(
             text,
             options,
             engine=engine,
@@ -206,15 +381,19 @@ class UnifiedTTSProvider:
             audio_format=fmt,
             filename_extension=fmt,
             mime_type=mime_map.get(fmt, "audio/mpeg"),
+            engine=used_engine,
+            voice_used=used_voice,
+            fallback_from=fallback_from,
         )
 
 
 __all__ = [
     "UnifiedTTSProvider",
+    "EdgeTTSProvider",
     "GTTSProvider",
     "EspeakProvider",
     "AbortError",
     "SynthesizedAudio",
     "detect_audio_format",
+    "normalize_engine_name",
 ]
-

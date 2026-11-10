@@ -8,6 +8,10 @@ from dotenv import load_dotenv
 
 from .constants import (
     DEFAULT_DISCORD_MAX_FILE_BYTES,
+    DEFAULT_EDGE_TTS_PITCH,
+    DEFAULT_EDGE_TTS_RATE,
+    DEFAULT_EDGE_TTS_TIMEOUT_SEC,
+    DEFAULT_EDGE_TTS_VOICE,
     DEFAULT_LANGUAGE,
     DEFAULT_TRANSLATION_TIMEOUT_SEC,
     DEFAULT_TRANSLATOR_PROVIDER,
@@ -48,6 +52,14 @@ class Config:
         default_voice: str = DEFAULT_VOICE,
         announce_links: bool = True,
         gtts_timeout_sec: float = 5.0,
+        edge_tts_voice: str = DEFAULT_EDGE_TTS_VOICE,
+        edge_tts_rate: str = DEFAULT_EDGE_TTS_RATE,
+        edge_tts_pitch: str = DEFAULT_EDGE_TTS_PITCH,
+        edge_tts_timeout_sec: float = DEFAULT_EDGE_TTS_TIMEOUT_SEC,
+        auto_git_pull: bool = False,
+        auto_git_pull_branch: str = "main",
+        auto_git_pull_pip: bool = True,
+        auto_git_pull_timeout_sec: int = 60,
         translator_provider: str = DEFAULT_TRANSLATOR_PROVIDER,
         translation_timeout_sec: float = DEFAULT_TRANSLATION_TIMEOUT_SEC,
         tts_timeout_sec: float = DEFAULT_TTS_TIMEOUT_SEC,
@@ -73,6 +85,14 @@ class Config:
         self.DEFAULT_VOICE = default_voice
         self.ANNOUNCE_LINKS = announce_links
         self.GTTS_TIMEOUT_SEC = gtts_timeout_sec
+        self.EDGE_TTS_VOICE = edge_tts_voice
+        self.EDGE_TTS_RATE = edge_tts_rate
+        self.EDGE_TTS_PITCH = edge_tts_pitch
+        self.EDGE_TTS_TIMEOUT_SEC = edge_tts_timeout_sec
+        self.AUTO_GIT_PULL = auto_git_pull
+        self.AUTO_GIT_PULL_BRANCH = auto_git_pull_branch
+        self.AUTO_GIT_PULL_PIP = auto_git_pull_pip
+        self.AUTO_GIT_PULL_TIMEOUT_SEC = auto_git_pull_timeout_sec
         self.TRANSLATOR_PROVIDER = translator_provider
         self.TRANSLATION_TIMEOUT_SEC = translation_timeout_sec
         self.TTS_TIMEOUT_SEC = tts_timeout_sec
@@ -192,6 +212,18 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
     )
     announce_links = _parse_bool(source.get("ANNOUNCE_LINKS"), True)
     gtts_timeout_sec = _parse_float(source.get("GTTS_TIMEOUT_SEC"), 5.0)
+    edge_tts_voice = _clean_str(source.get("EDGE_TTS_VOICE")) or DEFAULT_EDGE_TTS_VOICE
+    edge_tts_rate = _clean_str(source.get("EDGE_TTS_RATE")) or DEFAULT_EDGE_TTS_RATE
+    edge_tts_pitch = _clean_str(source.get("EDGE_TTS_PITCH")) or DEFAULT_EDGE_TTS_PITCH
+    edge_tts_timeout_sec = _parse_float(
+        source.get("EDGE_TTS_TIMEOUT_SEC"), DEFAULT_EDGE_TTS_TIMEOUT_SEC
+    )
+    auto_git_pull = _parse_bool(source.get("AUTO_GIT_PULL"), False)
+    auto_git_pull_branch = _clean_str(source.get("AUTO_GIT_PULL_BRANCH")) or "main"
+    auto_git_pull_pip = _parse_bool(source.get("AUTO_GIT_PULL_PIP"), True)
+    auto_git_pull_timeout_sec = _parse_num(
+        source.get("AUTO_GIT_PULL_TIMEOUT_SEC"), 60, min_val=5
+    )
     translator_provider = (
         _clean_str(source.get("TRANSLATOR_PROVIDER")).lower() or DEFAULT_TRANSLATOR_PROVIDER
     )
@@ -226,6 +258,14 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
         default_voice=DEFAULT_VOICE,
         announce_links=announce_links,
         gtts_timeout_sec=gtts_timeout_sec,
+        edge_tts_voice=edge_tts_voice,
+        edge_tts_rate=edge_tts_rate,
+        edge_tts_pitch=edge_tts_pitch,
+        edge_tts_timeout_sec=edge_tts_timeout_sec,
+        auto_git_pull=auto_git_pull,
+        auto_git_pull_branch=auto_git_pull_branch,
+        auto_git_pull_pip=auto_git_pull_pip,
+        auto_git_pull_timeout_sec=auto_git_pull_timeout_sec,
         translator_provider=translator_provider,
         translation_timeout_sec=translation_timeout_sec,
         tts_timeout_sec=tts_timeout_sec,

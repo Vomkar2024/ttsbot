@@ -21,9 +21,10 @@ from .tts.unified_provider import UnifiedTTSProvider
 from .voice.dave_compat import (
     check_dependency_warnings,
     ensure_dave_compat,
+    ensure_opus_loaded,
     get_voice_dependency_versions,
 )
-from .voice.session_manager import VoiceSessionManager
+from .voice.session_manager import VoiceSessionManager, resolve_ffmpeg_path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,7 +53,13 @@ class TTSBot(commands.Bot):
         self.tts_provider = UnifiedTTSProvider(
             default_engine=self.cfg.TTS_ENGINE,
             tts_bin=self.cfg.TTS_BIN,
-            options={"gtts_timeout_sec": self.cfg.GTTS_TIMEOUT_SEC},
+            options={
+                "gtts_timeout_sec": self.cfg.GTTS_TIMEOUT_SEC,
+                "edge_tts_voice": getattr(self.cfg, "EDGE_TTS_VOICE", "en-US-EmmaMultilingualNeural"),
+                "edge_tts_rate": getattr(self.cfg, "EDGE_TTS_RATE", "+0%"),
+                "edge_tts_pitch": getattr(self.cfg, "EDGE_TTS_PITCH", "+0Hz"),
+                "edge_tts_timeout_sec": getattr(self.cfg, "EDGE_TTS_TIMEOUT_SEC", 10.0),
+            },
         )
         self.espeak_provider = self.tts_provider  # Alias
         self.speaker_cooldown_tracker = SpeakerCooldownTracker(
@@ -265,17 +272,24 @@ async def main_async() -> None:
         missing_deps.append("davey")
 
     compat_status = ensure_dave_compat()
+    opus_loaded = ensure_opus_loaded()
     dep_versions = get_voice_dependency_versions()
     logger.info(
         "[Preflight] Voice dependencies: discord.py=%s, davey=%s, PyNaCl=%s, "
-        "has_nacl=%s, has_dave=%s, dave_compat_patched=%s",
+        "has_nacl=%s, has_dave=%s, opus_loaded=%s, dave_compat_patched=%s",
         dep_versions.get("discord_py") or "unknown",
         dep_versions.get("davey") or "missing",
         dep_versions.get("pynacl") or "missing",
         dep_versions.get("has_nacl"),
         dep_versions.get("has_dave"),
+        opus_loaded,
         compat_status.get("applied") or compat_status.get("already_patched"),
     )
+    if not opus_loaded:
+        logger.warning(
+            "[Preflight] Native libopus library did NOT load cleanly at startup. "
+            "On Linux containers, install system package 'libopus0' (apt install -y libopus0)."
+        )
     for dep_warning in check_dependency_warnings(dep_versions):
         logger.warning("[Preflight] %s", dep_warning)
 
@@ -319,16 +333,28 @@ async def main_async() -> None:
 
     resolved_ffmpeg = None
     try:
-        resolved_ffmpeg = shutil.which(bot.cfg.FFMPEG_PATH)
+        candidate_ffmpeg = resolve_ffmpeg_path(bot.cfg.FFMPEG_PATH)
+        if candidate_ffmpeg and (shutil.which(candidate_ffmpeg) or __import__("os").path.isfile(candidate_ffmpeg)):
+            resolved_ffmpeg = candidate_ffmpeg
     except Exception as ffmpeg_check_err:
         logger.debug("[Preflight] Exception while checking FFmpeg: %s", ffmpeg_check_err)
         resolved_ffmpeg = None
 
-    is_gtts_primary = (getattr(bot.cfg, "TTS_ENGINE", "gtts") or "").lower() in ("gtts", "google")
+    primary_engine = (getattr(bot.cfg, "TTS_ENGINE", "edge-tts") or "edge-tts").lower()
+    is_online_primary = primary_engine in ("edge-tts", "edge", "gtts", "google")
+    edge_voice_pack = getattr(bot.cfg, "EDGE_TTS_VOICE", "en-US-EmmaMultilingualNeural")
 
-    if not resolved_ffmpeg or (not resolved_espeak and not is_gtts_primary):
+    logger.info(
+        "[Preflight] TTS Engine='%s' (EdgeVoice='%s') | FFmpeg='%s' | eSpeak='%s'",
+        primary_engine,
+        edge_voice_pack,
+        resolved_ffmpeg or "MISSING",
+        resolved_espeak or "not found",
+    )
+
+    if not resolved_ffmpeg or (not resolved_espeak and not is_online_primary):
         missing_binaries = []
-        if not resolved_espeak and not is_gtts_primary:
+        if not resolved_espeak and not is_online_primary:
             missing_binaries.append("eSpeak NG")
         if not resolved_ffmpeg:
             missing_binaries.append("FFmpeg")
@@ -349,10 +375,10 @@ async def main_async() -> None:
 
         warn_lines.extend([
             "\n HOW TO FIX ON BOT HOSTING / LINUX (VPS, Docker, Pterodactyl):",
-            "   1. Ubuntu / Debian VPS: sudo apt update && sudo apt install -y espeak-ng ffmpeg",
-            "   2. Docker: Add 'RUN apt-get update && apt-get install -y espeak-ng ffmpeg' to Dockerfile",
+            "   1. Ubuntu / Debian VPS: sudo apt update && sudo apt install -y espeak-ng ffmpeg libopus0",
+            "   2. Docker: Add 'RUN apt-get update && apt-get install -y espeak-ng ffmpeg libopus0' to Dockerfile",
             "   3. Discloud: In discloud.config set APT=tools,espeak-ng,ffmpeg",
-            "   4. Pterodactyl: Select a container egg with audio/apt support or contact host support.",
+            "   4. Pterodactyl / bot-hosting.net: ensure 'imageio-ffmpeg' is installed in requirements.txt or use a Python egg with ffmpeg + libopus.",
             "\n HOW TO FIX ON WINDOWS:",
             "   - eSpeak NG: Install from https://github.com/espeak-ng/espeak-ng/releases",
             "   - FFmpeg: winget install Gyan.FFmpeg (or add ffmpeg.exe to PATH)",
@@ -362,10 +388,11 @@ async def main_async() -> None:
         full_warn = "\n".join(warn_lines)
         print(full_warn, file=sys.stderr, flush=True)
         logger.warning("System binaries missing: %s. TTS playback will fail until installed.", bin_str)
-    elif not resolved_espeak and is_gtts_primary:
+    elif not resolved_espeak and is_online_primary:
         logger.info(
-            "eSpeak NG binary not found on PATH. Primary TTS engine is 'gTTS' (natural web voice); "
-            "eSpeak offline fallback will be disabled."
+            "eSpeak NG binary not found on PATH. Primary TTS engine is '%s' (online voice pack); "
+            "offline eSpeak fallback will be unavailable.",
+            primary_engine,
         )
 
     if not bot.cfg.DISCORD_TOKEN:

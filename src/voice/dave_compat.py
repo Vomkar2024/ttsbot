@@ -18,6 +18,7 @@ This module provides:
 import inspect
 import logging
 import struct
+import sys
 from importlib import metadata as importlib_metadata
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -93,6 +94,43 @@ def _discord_handles_dave_transitions_natively(
         state_src = inspect.getsource(voice_state_cls._execute_transition)
         return "prepare_transition" in ws_src and "execute_transition" in state_src
     except (TypeError, OSError):
+        return False
+
+
+def ensure_opus_loaded() -> bool:
+    """Ensures libopus native library is loaded (including Linux libopus.so.0 fallback)."""
+    try:
+        import discord.opus
+
+        if discord.opus.is_loaded():
+            return True
+
+        try:
+            if discord.opus._load_default():
+                return True
+        except Exception:
+            pass
+
+        if sys.platform != "win32":
+            for lib_name in (
+                "libopus.so.0",
+                "libopus.so",
+                "opus",
+                "/usr/lib/x86_64-linux-gnu/libopus.so.0",
+                "/usr/lib/aarch64-linux-gnu/libopus.so.0",
+                "/usr/local/lib/libopus.so.0",
+            ):
+                try:
+                    discord.opus.load_opus(lib_name)
+                    if discord.opus.is_loaded():
+                        logger.info("[Opus] Loaded native libopus via '%s'.", lib_name)
+                        return True
+                except Exception:
+                    continue
+
+        return bool(discord.opus.is_loaded())
+    except Exception as err:
+        logger.debug("[Opus] Failed checking/loading libopus: %s", err)
         return False
 
 
@@ -386,6 +424,7 @@ def check_dependency_warnings(versions: Optional[Dict[str, Any]] = None) -> List
 
 __all__ = [
     "ensure_dave_compat",
+    "ensure_opus_loaded",
     "get_voice_dependency_versions",
     "inspect_voice_connection_state",
     "check_dependency_warnings",
