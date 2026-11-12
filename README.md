@@ -1,271 +1,132 @@
-# Discord TTS Bot (Python Edition)
+# TTS Bot (Hinglish Edition)
 
-An independent Discord text-to-speech bot written in Python, featuring dual-engine synthesis (**Google Translate TTS (gTTS)** for natural, human speech and **eSpeak NG** for offline local synthesis with automatic fallback), full Discord DAVE voice encryption support, and intelligent message processing adapted from [Discord-TTS/Bot](https://github.com/Discord-TTS/Bot). It automatically reads messages sent in the active voice channel's built-in text chat, as well as any configured text channel.
-
----
+A voice-chat focused Discord bot that listens to English text in chat and speaks natural Hindi audio. Supports on-demand Hinglish commands and automatic channel mode for seamless English-to-Hindi translation with voice playback.
 
 ## What It Does
 
 | Command | Description |
 | :--- | :--- |
-| `/setup` | Choose a text or voice channel to be read aloud (*Manage Server permission required*). |
-| `/join` | Join the voice channel you are currently in (supports seamless channel switching). |
-| `/leave` | Leave voice and discard current and pending speech. |
-| `/voice` | Select natural accents (US, UK, Australia, India, etc.) or eSpeak variants for yourself, or set the server default. |
-| `/language` | Select the speech language for yourself, or set the server default. |
-| `/queue` | Inspect the current message and waiting queue. |
-| `/skip` | Cancel only the current message; the next waiting item starts. |
-| `/stop` | Cancel current speech and discard all waiting items. |
-| `/clear` | Discard waiting items without interrupting current speech. |
-| `/status` | Show active listening text channels, voice connection, active speech engine, and server defaults. |
-| `/hinglish say` | Translate a message into English text in the channel and play/attach synced Hindi speech audio. |
-| `/hinglish mode` | Enable or disable automatic Hinglish mode for incoming messages in a channel (*Manage Server required*). |
-| `/hinglish status` | Inspect Hinglish mode status, active translator layer, and voice/attachment delivery state. |
+| `/setup` | Choose text channel to read aloud (Manage Server required). |
+| `/join` | Join voice channel you are in. |
+| `/leave` | Leave voice and discard current/pending speech. |
+| `/voice` | Select voice style (US, UK, India, etc.) for yourself or server. |
+| `/language` | Set speech language (en, hi) for yourself or server. |
+| `/queue` | View current and waiting speech queue. |
+| `/skip` | Cancel current message only. |
+| `/stop` | Cancel current and all waiting messages. |
+| `/clear` | Discard waiting messages without interrupting current speech. |
+| `/status` | Show voice connection, active channel, and your settings. |
+| `/hinglish say` | Convert text to English display + Hindi audio (voice or file). |
+| `/hinglish mode` | Enable automatic Hinglish for a channel (Manage Server required). |
+| `/hinglish status` | Check Hinglish configuration and translator backend. |
 
-### Advanced Voice & Chat Intelligence (matching Discord-TTS/Bot)
-- **Natural Speech & Dual-Engine Fallback**: Default to **gTTS** for realistic, fluent voices with automatic fallback to **eSpeak NG**.
-- **Speaker Announcement Cooldown**: 60-second cooldown so consecutive messages from the same user don't repetitively repeat `"Alice says:"`.
-- **Link & Attachment Speech Context**: Transcodes links into `"Alice sent a link"` and file attachments into `"Alice sent an image file"`, `"an audio file"`, `"a text file"`, etc.
-- **Chat Acronym Expansion**: Expands common acronyms (`iirc`, `afaik`, `btw`, `rn`, `brb`, `:)`, `:(`).
-- **Spam Character Limiting**: Truncates repetitive characters (e.g. `loooooool` -> `loool`).
-- **Seamless Channel Moves**: Uses Discord gateway `move_to` for smooth channel transitions without reconnect race conditions.
-
----
-
-## Technology Choices
-
-- **Python 3.10+ (tested with 3.13 & 3.14)**: Asynchronous architecture built on `asyncio`.
-- **discord.py 2.5+**: Maintained Discord API library with application slash-command tree and gateway abstractions.
-- **PyNaCl & davey**: Voice protocol audio encryption and Discord DAVE protocol (End-to-End Encryption) for voice connections.
-- **gTTS & eSpeak NG**: Dual-engine pipeline. gTTS provides natural online voices; eSpeak NG provides zero-dependency offline local audio.
-- **FFmpeg**: Transcodes local audio stream into Discord-compatible 48kHz stereo Opus frames (`discord.FFmpegPCMAudio` with `PCMVolumeTransformer`).
-- **Python's built-in `sqlite3`**: Persistent, fast local settings storage without operating an external database server.
-
----
-
-## Project Structure
-
-```
-tts-bot/
-├── .env.example
-├── .gitignore
-├── requirements.txt
-├── pyproject.toml
-├── README.md
-├── main.py
-├── docs/
-│   └── REFERENCE_ANALYSIS.md
-├── scripts/
-│   └── deploy_commands.py
-├── src/
-│   ├── __init__.py
-│   ├── app.py
-│   ├── config.py
-│   ├── constants.py
-│   ├── commands/
-│   │   ├── __init__.py
-│   │   └── tts_commands.py
-│   ├── events/
-│   │   ├── __init__.py
-│   │   └── message_handler.py
-│   ├── storage/
-│   │   ├── __init__.py
-│   │   └── settings_store.py
-│   ├── tts/
-│   │   ├── __init__.py
-│   │   ├── espeak_provider.py
-│   │   └── format_message.py
-│   └── voice/
-│       ├── __init__.py
-│       ├── discord_voice_session.py
-│       ├── serial_queue.py
-│       └── session_manager.py
-└── tests/
-    ├── __init__.py
-    ├── test_espeak_provider.py
-    ├── test_format_message.py
-    ├── test_message_handler.py
-    ├── test_serial_queue.py
-    ├── test_session_manager.py
-    └── test_settings_store.py
-```
-
----
+## Hinglish Behavior
+- **Input**: English text (or Hinglish mix) in configured channel.
+- **Output**: English text displayed in chat + Hindi audio spoken in voice channel.
+- **Fallback**: If no voice channel active, attaches Hindi MP3 file to message.
+- **Translation**: Uses OpenAI-compatible LLM or Google Deep Translator for accurate English→Hindi conversion.
 
 ## Requirements
+- Python 3.10+ (3.13 recommended)
+- FFmpeg (system binary `ffmpeg` on PATH)
+- eSpeak NG (system binary `espeak-ng` on PATH)
+- Discord bot token
+- Discord application with Message Content Intent enabled
 
-- **Python 3.10 or newer** (Python 3.13 recommended).
-- **FFmpeg** available on `PATH` (or set `FFMPEG_PATH`).
-- **eSpeak NG** available on `PATH` (or set `TTS_BIN`).
-- A Discord application and bot token.
-- Outbound network access to Discord gateway/API and Discord voice servers. Your host/firewall must allow UDP traffic used by Discord voice.
-
----
-
-## Install System Dependencies
-
-### Ubuntu / Debian
+## System Dependencies (Linux)
 ```bash
 sudo apt update
-sudo apt install -y ffmpeg espeak-ng python3 python3-pip python3-venv
+sudo apt install -y ffmpeg espeak-ng python3 python3-pip python3-venv libopus0
 ```
 
-### macOS (Homebrew)
+## System Dependencies (macOS)
 ```bash
-brew install ffmpeg espeak-ng python
+brew install ffmpeg espeak-ng python3
 ```
 
-### Windows (winget)
+## System Dependencies (Windows)
 ```powershell
 winget install Gyan.FFmpeg
 winget install eSpeak-NG.eSpeak-NG
 ```
 
-After installation, verify both executables are available:
+After installing, verify:
 ```bash
 ffmpeg -version
 espeak-ng --version
 ```
 
----
+## Create Discord Application
+1. Go to Discord Developer Portal → New Application.
+2. Create Bot, enable Message Content Intent under Bot → Privileged Gateway Intents.
+3. Copy bot token and application ID.
+4. Under OAuth2, select scopes: bot, applications.commands.
+5. Grant permissions: View Channels, Read Message History, Send Messages, Attach Files, Connect, Speak.
+6. Invite bot to your server.
 
-## Create the Discord Application and Bot
-
-1. Open the [Discord Developer Portal](https://discord.com/developers/applications) and choose **New Application**.
-2. Give the application a name and open its **Bot** tab.
-3. Click **Add Bot** if not already created. Use **Reset Token** to generate a bot token and copy it. Treat this token like a password; never commit it or share it.
-4. Under **Bot → Privileged Gateway Intents**, enable:
-   - **Message Content Intent** (required to read message text).
-5. Under **General Information**, copy the **Application ID** (`CLIENT_ID` / `DISCORD_CLIENT_ID`).
-6. Under **OAuth2 → URL Generator**, select scopes:
-   - `bot`
-   - `applications.commands`
-7. Select bot permissions:
-   - `View Channels`
-   - `Read Message History`
-   - `Send Messages`
-   - `Attach Files` *(required for Hinglish audio file fallback when no voice channel is active)*
-   - `Connect`
-   - `Speak`
-8. Open the generated invite URL and add the bot to your test server.
-
----
-
-## Configure and Run
-
-1. Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-
-2. Edit `.env` and set:
-   ```env
-   DISCORD_CLIENT_ID=your_application_id
-   DISCORD_TOKEN=your_bot_token
-   TTS_BIN=espeak-ng
-   DATABASE_PATH=./data/tts.sqlite
-   ```
-   *(Optional: set `DISCORD_GUILD_ID=your_test_guild_id` during development so slash commands register instantly in that server).*
-
-3. Install Python dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Register slash commands (Optional — the bot syncs automatically upon startup, but you can sync standalone):
-   ```bash
-   python scripts/deploy_commands.py
-   ```
-
-5. Start the bot:
-   ```bash
-   python main.py
-   ```
-
-The bot will automatically create the SQLite database and `data/` directory.
-
----
-
-## Bot Hosting & Cloud Deployment Guide
-
-When deploying to 24/7 bot hosting platforms, remember that **eSpeak NG** and **FFmpeg** are native system binaries that must be present in the container/server.
-
-### 1. Docker / VPS / Cloud Containers (Recommended)
-Use the included [`Dockerfile`](file:///e:/Download/Omkar/botmaker/tts/Dockerfile). It automatically installs `espeak-ng`, `ffmpeg`, and required libraries:
-```bash
-docker build -t discord-tts-bot .
-docker run -d --name tts-bot --env-file .env -v $(pwd)/data:/app/data discord-tts-bot
+## Configuration
+Copy `.env.example` to `.env` and set:
+```env
+DISCORD_TOKEN=your_bot_token
+DISCORD_CLIENT_ID=your_application_id
+TTS_ENGINE=edge-tts  # edge-tts | gtts | espeak
+TTS_BIN=espeak-ng
+FFMPEG_PATH=ffmpeg
+DATABASE_PATH=./data/tts.sqlite
 ```
 
-### 2. Discloud
-A [`discloud.config`](file:///e:/Download/Omkar/botmaker/tts/discloud.config) file is included with `APT=tools,espeak-ng,ffmpeg`.
-1. Upload your project files (including `discloud.config` and `.env`).
-2. Discloud will automatically install `espeak-ng` and `ffmpeg` during startup.
+Optional: `DISCORD_GUILD_ID` for development command sync.
 
-### 3. Railway / Render / Fly.io
-The included [`nixpacks.toml`](file:///e:/Download/Omkar/botmaker/tts/nixpacks.toml) and [`apt.txt`](file:///e:/Download/Omkar/botmaker/tts/apt.txt) automatically declare `espeak-ng` and `ffmpeg` as system dependencies.
+## Install Python Dependencies
+```bash
+pip install -r requirements.txt
+```
 
-### 4. Shared Pterodactyl Panels (PebbleHost, BisectHosting, SparkedHost, etc.)
-- In your hosting panel's **Environment Variables** or `.env`, make sure `TTS_BIN` is set to `espeak-ng` (NOT a Windows path like `C:\Program Files\...`).
-- If your host's default Python egg lacks `ffmpeg` or `espeak-ng`, switch to a Python Egg that includes audio/FFmpeg tools, or ask host support to install `espeak-ng` and `ffmpeg` on your egg image.
+## Run
+```bash
+python main.py
+```
 
----
+The bot creates `data/` and SQLite database automatically.
 
-### Quick Discord Usage
-1. A server manager runs `/setup` in the desired text channel (or specifies one).
-2. Users join a voice channel and run `/join`.
-3. Any message typed into the configured text channel will be spoken in the voice channel.
-4. When finished, run `/leave`.
-
-### Using Hinglish Mode (English Text + Hindi Speech)
-1. **On-demand command**: Run `/hinglish say text:"Bhai aaj meeting 5 baje hai"` in any channel:
-   - The bot posts the English meaning in the channel (`"Brother, today's meeting is at 5 o'clock"`).
-   - If you are in a voice channel (or the bot has an active voice session), it joins and speaks the corresponding Hindi audio there.
-   - If no voice channel is active, it attaches the synthesized Hindi audio file (`.mp3` / `.wav`) directly to the message.
-2. **Automatic channel mode**: A server manager runs `/hinglish mode enabled:True` in a channel so every incoming message automatically outputs English text in chat and plays/attaches synced Hindi audio.
-3. Run `/hinglish status` to check active channel settings, translator backend, and voice state.
-
----
+## Deployment
+- Docker: Use included Dockerfile (installs eSpeak/FFmpeg).
+- Discloud: Include `discloud.config` with `APT=tools,espeak-ng,ffmpeg`.
+- Railway/Render: Use `nixpacks.toml` for system dependencies.
 
 ## Environment Variables
-
-| Variable | Required | Default | Purpose |
+| Variable | Required | Default | Description |
 | :--- | :---: | :---: | :--- |
-| `DISCORD_TOKEN` | **Yes** | — | Bot token from Developer Portal → Bot. |
-| `DISCORD_CLIENT_ID` / `CLIENT_ID` | **Yes** | — | Discord application ID. |
-| `DISCORD_GUILD_ID` | No | *empty* | Register commands to one development server instead of globally. |
-| `TTS_BIN` | No | `espeak-ng` | eSpeak NG executable name or full binary path. |
-| `FFMPEG_PATH` | No | `ffmpeg` on `PATH` | Explicit FFmpeg executable path. |
-| `DATABASE_PATH` | No | `./data/tts.sqlite` | Local SQLite database file (`:memory:` for tests). |
-| `SPEAK_USERNAMES` | No | `true` | Prefix each message with the sender's display name. |
-| `MAX_QUEUE_SIZE` | No | `50` | Maximum waiting messages per server, excluding active item. |
-| `MAX_MESSAGE_CHARS` | No | `800` | Maximum message characters sent to the local TTS engine. |
-| `VOICE_READY_TIMEOUT_MS` | No | `15000` | Time to wait for a voice connection to become ready. |
-| `VOICE_DISCONNECT_GRACE_MS` | No | `8000` | Grace period for temporary voice disconnects before cleanup. |
-| `TRANSLATOR_PROVIDER` | No | `auto` | Hinglish translator (`auto`, `google`, or `openai`). |
-| `TRANSLATION_TIMEOUT_SEC` | No | `10.0` | Timeout in seconds for Hinglish translation requests. |
-| `TTS_TIMEOUT_SEC` | No | `15.0` | Timeout in seconds for Hindi audio synthesis in Hinglish mode. |
-| `MAX_AUDIO_FILE_BYTES` | No | `10485760` | Maximum audio attachment size in bytes (also bounded by server limit). |
-| `OPENAI_API_KEY` | No | *empty* | Optional OpenAI-compatible API key for idiomatic Romanized Hinglish translation. |
-| `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | Optional OpenAI-compatible API base URL. |
-| `OPENAI_MODEL` | No | `gpt-4o-mini` | Model name when `TRANSLATOR_PROVIDER=openai`. |
+| DISCORD_TOKEN | Yes | — | Bot token |
+| DISCORD_CLIENT_ID | Yes | — | Application ID |
+| TTS_ENGINE | No | edge-tts | Synthesis engine |
+| TTS_BIN | No | espeak-ng | eSpeak executable |
+| FFMPEG_PATH | No | ffmpeg | FFmpeg path |
+| DATABASE_PATH | No | ./data/tts.sqlite | SQLite storage |
+| TRANSLATOR_PROVIDER | No | auto | Translation backend (auto/google/openai) |
+| OPENAI_API_KEY | No | — | For OpenAI translation |
+| MAX_QUEUE_SIZE | No | 50 | Max waiting messages |
+| VOICE_READY_TIMEOUT_MS | No | 15000 | Voice connection timeout |
+| TTS_TIMEOUT_SEC | No | 15.0 | Hindi synthesis timeout |
 
----
+## Voice Channel Flow
+1. User joins voice channel.
+2. Run `/join` (or auto-join if configured).
+3. Messages in configured text channel are translated to Hindi and spoken.
+4. Queue ensures one speech at a time.
 
-## Automated Test Suite
+## Hinglish Commands
+- `/hinglish say text:"Bhai meeting 5 baje hai"` → Shows English + speaks Hindi.
+- `/hinglish mode enabled:true channel:#chat` → Auto-process channel messages.
+- `/hinglish status` → Shows current configuration.
 
-Run the full automated test suite using Python's native `unittest`:
+## Testing
+Run full test suite:
 ```bash
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-The tests cover:
-- FIFO ordering and non-overlapping sequential processing.
-- `skip`, `stop`, and `clear` queue control semantics.
-- Queue bounds enforcement (`QueueFullError`).
-- Same-channel join reuse, channel moves, and concurrent join serialization.
-- Idempotent `leave` and stale disconnect cleanup.
-- SQLite field-by-field preference precedence.
-- Message filtering (bots, webhooks, DMs, non-configured channels).
-- Discord Markdown and entity cleanup (URLs, emojis, mentions, control chars).
-- Local eSpeak NG synthesis (runs live if installed, otherwise skips gracefully).
+Tests cover queue logic, voice session management, translation, and audio synthesis.
+
+## License
+MIT License. Source code in this repository.
