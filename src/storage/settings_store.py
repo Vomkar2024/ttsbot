@@ -62,6 +62,13 @@ class SettingsStore:
                     delivery_mode TEXT NOT NULL DEFAULT 'auto',
                     updated_at INTEGER
                 );
+
+                CREATE TABLE IF NOT EXISTS translation_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    english_text TEXT NOT NULL,
+                    hindi_text TEXT NOT NULL,
+                    created_at INTEGER
+                );
                 """
             )
 
@@ -299,4 +306,3 @@ class SettingsStore:
 
 
 __all__ = ["SettingsStore"]
-

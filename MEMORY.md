@@ -1,0 +1,1 @@
+- [Translation Cache and Retry](memory/translation-cache-and-retry.md) — Implemented translation caching and exponential backoff retry for Hinglish mode to resolve 429 API errors.
