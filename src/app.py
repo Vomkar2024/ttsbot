@@ -78,6 +78,7 @@ class TTSBot(commands.Bot):
             openai_api_key=self.cfg.OPENAI_API_KEY,
             openai_base_url=self.cfg.OPENAI_BASE_URL,
             openai_model=self.cfg.OPENAI_MODEL,
+            settings_store=self.settings_store,
         )
         self.hinglish_service = HinglishService(
             translator=self.translator,

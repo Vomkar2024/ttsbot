@@ -27,6 +27,7 @@ class TestAppAndVoiceState(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.bot.session_manager)
         self.assertIsNotNone(self.bot.settings_store)
         self.assertIsNotNone(self.bot.tts_provider)
+        self.assertIs(self.bot.translator.settings_store, self.bot.settings_store)
         self.assertEqual(self.bot.command_prefix, "!")
 
     async def test_on_ready_sets_presence(self):

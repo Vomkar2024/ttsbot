@@ -1,5 +1,9 @@
 """Factory for constructing the configured Hinglish translation provider."""
 
+from typing import Optional
+
+from src.storage.settings_store import SettingsStore
+
 from .base import TranslatorProvider
 from .deep_translator_provider import DeepTranslatorProvider
 from .openai_translator_provider import (
@@ -16,12 +20,13 @@ def create_translator_provider(
     openai_api_key: str = "",
     openai_base_url: str = DEFAULT_OPENAI_BASE_URL,
     openai_model: str = DEFAULT_OPENAI_MODEL,
+    settings_store: Optional[SettingsStore] = None,
 ) -> TranslatorProvider:
     """Builds a swappable TranslatorProvider from configuration values."""
     normalized = (provider or "auto").strip().lower()
 
     if normalized == "auto":
-        # Prefer OpenAI if configured, otherwise fallback to DeepL
+        # Prefer OpenAI if configured, otherwise fallback to DeepTranslatorProvider
         if (openai_api_key or "").strip():
             return OpenAITranslatorProvider(
                 api_key=openai_api_key,
@@ -29,7 +34,7 @@ def create_translator_provider(
                 model=openai_model,
                 timeout=timeout,
             )
-        return DeepTranslatorProvider(timeout=timeout)
+        return DeepTranslatorProvider(timeout=timeout, settings_store=settings_store)
 
     if normalized in ("openai", "llm"):
         return OpenAITranslatorProvider(
@@ -40,7 +45,7 @@ def create_translator_provider(
         )
 
     if normalized in ("google", "deep_translator", "deep-translator"):
-        return DeepTranslatorProvider(timeout=timeout)
+        return DeepTranslatorProvider(timeout=timeout, settings_store=settings_store)
 
     raise ValueError(
         f"Unsupported TRANSLATOR_PROVIDER '{provider}'. Expected 'auto', 'google', or 'openai'."

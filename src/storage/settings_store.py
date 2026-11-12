@@ -297,6 +297,51 @@ class SettingsStore:
             return configured_channel_id == str(channel_id)
         return True
 
+    def get_cached_translation(
+        self,
+        cache_key: str,
+        *,
+        max_age_ms: Optional[int] = None,
+    ) -> Optional[tuple[str, str]]:
+        if not cache_key:
+            return None
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT english_text, hindi_text, created_at FROM translation_cache WHERE cache_key = ?",
+                (cache_key,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            if max_age_ms is not None and row["created_at"] is not None:
+                now = int(time.time() * 1000)
+                if now - int(row["created_at"]) > max_age_ms:
+                    return None
+            return (str(row["english_text"]), str(row["hindi_text"]))
+
+    def set_cached_translation(
+        self,
+        cache_key: str,
+        english_text: str,
+        hindi_text: str,
+    ) -> None:
+        if not cache_key or not english_text or not hindi_text:
+            return
+        now = int(time.time() * 1000)
+        with self._lock:
+            self.conn.execute(
+                """
+                INSERT INTO translation_cache (cache_key, english_text, hindi_text, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    english_text = excluded.english_text,
+                    hindi_text = excluded.hindi_text,
+                    created_at = excluded.created_at
+                """,
+                (cache_key, english_text, hindi_text, now),
+            )
+
     def close(self) -> None:
         with self._lock:
             try:

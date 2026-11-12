@@ -78,6 +78,14 @@ class TestSettingsStore(unittest.TestCase):
         self.assertEqual(self.store.resolve_preferences("guild_1", "user_1")["language"], "de")
         self.assertEqual(self.store.resolve_preferences("guild_1", "user_1")["voice"], "+m2")
 
+    def test_caches_and_retrieves_translations(self):
+        self.assertIsNone(self.store.get_cached_translation("missing"))
+        self.store.set_cached_translation("k1", "Hello", "नमस्ते")
+        self.assertEqual(self.store.get_cached_translation("k1"), ("Hello", "नमस्ते"))
+        self.store.set_cached_translation("k1", "Hi there", "नमस्कार")
+        self.assertEqual(self.store.get_cached_translation("k1"), ("Hi there", "नमस्कार"))
+        self.assertIsNone(self.store.get_cached_translation("k1", max_age_ms=-1))
+
 
 if __name__ == "__main__":
     unittest.main()

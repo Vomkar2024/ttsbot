@@ -7,6 +7,7 @@ from types import ModuleType
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from src.storage.settings_store import SettingsStore
 from src.translation import (
     DeepTranslatorProvider,
     HinglishTranslation,
@@ -19,6 +20,11 @@ from src.translation import (
 
 
 class TestDeepTranslatorProvider(unittest.IsolatedAsyncioTestCase):
+    async def test_is_available_returns_true_with_deep_translator(self):
+        provider = DeepTranslatorProvider(min_request_interval_sec=0.0)
+        self.assertIsInstance(provider, TranslatorProvider)
+        self.assertTrue(await provider.is_available())
+
     async def test_derives_hindi_from_canonical_english_meaning(self):
         calls = []
 
@@ -41,7 +47,7 @@ class TestDeepTranslatorProvider(unittest.IsolatedAsyncioTestCase):
         async def inline_to_thread(fn, *args, **kwargs):
             return fn(*args, **kwargs)
 
-        provider = DeepTranslatorProvider(timeout=5.0)
+        provider = DeepTranslatorProvider(timeout=5.0, min_request_interval_sec=0.0)
         with patch.dict(sys.modules, {"deep_translator": fake_mod}):
             with patch(
                 "src.translation.deep_translator_provider.asyncio.to_thread",
@@ -87,20 +93,234 @@ class TestDeepTranslatorProvider(unittest.IsolatedAsyncioTestCase):
             def translate(self, text):
                 return ""
 
+        class EmptyMyMemoryTranslator:
+            def __init__(self, source="en-GB", target="hi-IN"):
+                pass
+
+            def translate(self, text):
+                return ""
+
         fake_mod = ModuleType("deep_translator")
         fake_mod.GoogleTranslator = EmptyGoogleTranslator
+        fake_mod.MyMemoryTranslator = EmptyMyMemoryTranslator
+
+        fake_resp = MagicMock(status_code=200)
+        fake_resp.json.return_value = [[["", None, None, 1]]]
 
         async def inline_to_thread(fn, *args, **kwargs):
             return fn(*args, **kwargs)
 
-        provider = DeepTranslatorProvider()
+        provider = DeepTranslatorProvider(min_request_interval_sec=0.0)
         with patch.dict(sys.modules, {"deep_translator": fake_mod}):
-            with patch(
-                "src.translation.deep_translator_provider.asyncio.to_thread",
-                side_effect=inline_to_thread,
-            ):
-                with self.assertRaises(TranslationError):
-                    await provider.translate_to_english_and_hindi("hello")
+            with patch("requests.get", return_value=fake_resp):
+                with patch(
+                    "src.translation.deep_translator_provider.asyncio.to_thread",
+                    side_effect=inline_to_thread,
+                ):
+                    with self.assertRaises(TranslationError):
+                        await provider.translate_to_english_and_hindi("hello")
+
+    async def test_caches_in_memory_and_sqlite_across_instances(self):
+        calls = []
+
+        class CountingGoogleTranslator:
+            def __init__(self, source="auto", target="en"):
+                self.source = source
+                self.target = target
+
+            def translate(self, text):
+                calls.append((self.source, self.target, text))
+                if self.target == "en":
+                    return "Let's go"
+                return "चलो चलते हैं"
+
+        fake_mod = ModuleType("deep_translator")
+        fake_mod.GoogleTranslator = CountingGoogleTranslator
+
+        async def inline_to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        store = SettingsStore(":memory:")
+        try:
+            provider1 = create_translator_provider(
+                "auto", timeout=5.0, openai_api_key="", settings_store=store
+            )
+            self.assertIsInstance(provider1, DeepTranslatorProvider)
+            provider1.min_request_interval_sec = 0.0
+
+            with patch.dict(sys.modules, {"deep_translator": fake_mod}):
+                with patch(
+                    "src.translation.deep_translator_provider.asyncio.to_thread",
+                    side_effect=inline_to_thread,
+                ):
+                    res1 = await provider1.translate_to_english_and_hindi("Chalo   chalte hain")
+                    # Second call hits in-memory cache (whitespace normalized)
+                    res2 = await provider1.translate_to_english_and_hindi("Chalo chalte hain")
+
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(res1.english_text, "Let's go")
+            self.assertEqual(res2.hindi_text, "चलो चलते हैं")
+
+            # New provider sharing the same SettingsStore hits SQLite cache with 0 API calls
+            provider2 = create_translator_provider(
+                "google", timeout=5.0, settings_store=store
+            )
+            with patch.dict(sys.modules, {"deep_translator": fake_mod}):
+                with patch(
+                    "src.translation.deep_translator_provider.asyncio.to_thread",
+                    side_effect=inline_to_thread,
+                ):
+                    res3 = await provider2.translate_to_english_and_hindi("Chalo chalte hain")
+
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(res3.english_text, "Let's go")
+            self.assertEqual(res3.hindi_text, "चलो चलते हैं")
+        finally:
+            store.close()
+
+    async def test_rate_limit_429_triggers_cooldown_and_falls_back_to_gtx(self):
+        web_calls = []
+        gtx_calls = []
+
+        class TooManyRequests(Exception):
+            pass
+
+        class RateLimitedGoogleTranslator:
+            def __init__(self, source="auto", target="en"):
+                self.source = source
+                self.target = target
+
+            def translate(self, text):
+                web_calls.append((self.source, self.target, text))
+                raise TooManyRequests(
+                    "Server Error: You made too many requests to the server."
+                    "According to google, you are allowed to make 5 requests per second"
+                )
+
+        def fake_requests_get(url, params=None, headers=None, timeout=None):
+            gtx_calls.append((params["sl"], params["tl"], params["q"]))
+            resp = MagicMock(status_code=200)
+            if params["tl"] == "en":
+                resp.json.return_value = [[["Hello friend", params["q"], None, None, 10]]]
+            else:
+                resp.json.return_value = [[["नमस्ते दोस्त", params["q"], None, None, 10]]]
+            return resp
+
+        fake_mod = ModuleType("deep_translator")
+        fake_mod.GoogleTranslator = RateLimitedGoogleTranslator
+
+        async def inline_to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        provider = DeepTranslatorProvider(
+            timeout=5.0, min_request_interval_sec=0.0, cooldown_sec=60.0
+        )
+        with patch.dict(sys.modules, {"deep_translator": fake_mod}):
+            with patch("requests.get", side_effect=fake_requests_get):
+                with patch(
+                    "src.translation.deep_translator_provider.asyncio.to_thread",
+                    side_effect=inline_to_thread,
+                ):
+                    res1 = await provider.translate_to_english_and_hindi("Namaste dost")
+                    # Second distinct phrase during cooldown should skip GoogleTranslator completely
+                    res2 = await provider.translate_to_english_and_hindi("Kaise ho bhai")
+
+        self.assertEqual(res1.english_text, "Hello friend")
+        self.assertEqual(res1.hindi_text, "नमस्ते दोस्त")
+        self.assertEqual(res2.english_text, "Hello friend")
+        # Only 1 attempt hit RateLimitedGoogleTranslator before entering cooldown
+        self.assertEqual(len(web_calls), 1)
+        self.assertEqual(len(gtx_calls), 4)
+
+    async def test_partial_success_does_not_rerun_step1_and_falls_back_to_mymemory(self):
+        web_calls = []
+        mm_calls = []
+
+        class TooManyRequests(Exception):
+            pass
+
+        class PartialGoogleTranslator:
+            def __init__(self, source="auto", target="en"):
+                self.source = source
+                self.target = target
+
+            def translate(self, text):
+                web_calls.append((self.source, self.target, text))
+                if self.target == "en":
+                    return "Meeting at five"
+                raise TooManyRequests("429 Too Many Requests")
+
+        class FakeMyMemoryTranslator:
+            def __init__(self, source="en-GB", target="hi-IN"):
+                self.source = source
+                self.target = target
+
+            def translate(self, text):
+                mm_calls.append((self.source, self.target, text))
+                return "पांच बजे मीटिंग"
+
+        def rate_limited_gtx(url, params=None, headers=None, timeout=None):
+            return MagicMock(status_code=429)
+
+        fake_mod = ModuleType("deep_translator")
+        fake_mod.GoogleTranslator = PartialGoogleTranslator
+        fake_mod.MyMemoryTranslator = FakeMyMemoryTranslator
+
+        async def inline_to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        provider = DeepTranslatorProvider(
+            timeout=5.0, min_request_interval_sec=0.0, cooldown_sec=60.0
+        )
+        with patch.dict(sys.modules, {"deep_translator": fake_mod}):
+            with patch("requests.get", side_effect=rate_limited_gtx):
+                with patch(
+                    "src.translation.deep_translator_provider.asyncio.to_thread",
+                    side_effect=inline_to_thread,
+                ):
+                    res = await provider.translate_to_english_and_hindi("5 baje meeting hai")
+
+        self.assertEqual(res.english_text, "Meeting at five")
+        self.assertEqual(res.hindi_text, "पांच बजे मीटिंग")
+        # Step 1 (auto->en) was called only ONCE and never re-run when Step 2 failed
+        self.assertEqual(
+            web_calls,
+            [
+                ("auto", "en", "5 baje meeting hai"),
+                ("en", "hi", "Meeting at five"),
+            ],
+        )
+        self.assertEqual(mm_calls, [("en-GB", "hi-IN", "Meeting at five")])
+
+    async def test_raises_clear_error_when_all_backends_rate_limited(self):
+        class TooManyRequests(Exception):
+            pass
+
+        class RateLimitedAll:
+            def __init__(self, source="auto", target="en"):
+                pass
+
+            def translate(self, text):
+                raise TooManyRequests("429 Too Many Requests")
+
+        fake_mod = ModuleType("deep_translator")
+        fake_mod.GoogleTranslator = RateLimitedAll
+        fake_mod.MyMemoryTranslator = RateLimitedAll
+
+        async def inline_to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        provider = DeepTranslatorProvider(timeout=5.0, min_request_interval_sec=0.0)
+        with patch.dict(sys.modules, {"deep_translator": fake_mod}):
+            with patch("requests.get", return_value=MagicMock(status_code=429)):
+                with patch(
+                    "src.translation.deep_translator_provider.asyncio.to_thread",
+                    side_effect=inline_to_thread,
+                ):
+                    with self.assertRaises(TranslationError) as ctx:
+                        await provider.translate_to_english_and_hindi("test")
+
+        self.assertIn("rate-limited", str(ctx.exception).lower())
 
 
 class TestOpenAITranslatorProvider(unittest.IsolatedAsyncioTestCase):

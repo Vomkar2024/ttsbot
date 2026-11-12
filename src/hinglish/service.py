@@ -231,20 +231,6 @@ class HinglishService:
             )
 
         # 1. Translate once into paired English (display) and Hindi (spoken) text
-                # First try cache lookup for identical text
-        cache_key = cleaned.strip()
-        cached = self.translator._get_translation_cache(cache_key)
-        if cached:
-            english_text, hindi_text = cached
-            logger.debug("[HinglishService] Cache hit for: %s", cache_key[:50])
-            return HinglishResult(
-                source_text=cleaned,
-                english_text=english_text,
-                hindi_text=hindi_text,
-                delivered_via="none",
-                status_note="✅ Retrieved from translation cache.",
-            )
-        # Cache miss - proceed with API translation
         try:
             translation: HinglishTranslation = await self.translator.translate_to_english_and_hindi(
                 cleaned,

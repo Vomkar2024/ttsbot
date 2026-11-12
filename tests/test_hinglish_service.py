@@ -332,6 +332,62 @@ class TestHinglishService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res.error_code, "TRANSLATION_TIMEOUT")
         self.assertEqual(len(tts.calls), 0)
 
+    async def test_cached_translation_still_synthesizes_and_delivers_audio(self):
+        import sys
+        from types import ModuleType
+        from unittest.mock import patch
+        from src.storage.settings_store import SettingsStore
+        from src.translation import DeepTranslatorProvider
+
+        calls = []
+
+        class FakeGoogleTranslator:
+            def __init__(self, source="auto", target="en"):
+                self.target = target
+
+            def translate(self, text):
+                calls.append(text)
+                return "Good night!" if self.target == "en" else "शुभ रात्रि!"
+
+        fake_mod = ModuleType("deep_translator")
+        fake_mod.GoogleTranslator = FakeGoogleTranslator
+
+        async def inline_to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        store = SettingsStore(":memory:")
+        try:
+            translator = DeepTranslatorProvider(settings_store=store, min_request_interval_sec=0.0)
+            tts = FakeTTSProvider(audio_bytes=b"ID3_FAKE_MP3")
+            session_manager = MagicMock()
+            session_manager.get_session.return_value = None
+            service = HinglishService(translator, tts, session_manager)
+
+            guild = SimpleNamespace(id="g_1", me=SimpleNamespace(id="bot_1"), filesize_limit=10_485_760)
+            member = SimpleNamespace(id="u_1", voice=None)
+            tc = self._make_text_channel(attach_files=True)
+
+            with patch.dict(sys.modules, {"deep_translator": fake_mod}):
+                with patch(
+                    "src.translation.deep_translator_provider.asyncio.to_thread",
+                    side_effect=inline_to_thread,
+                ):
+                    res1 = await service.process_message(
+                        "Shubh ratri", guild=guild, member=member, text_channel=tc, delivery_mode=DELIVERY_AUTO
+                    )
+                    res2 = await service.process_message(
+                        "Shubh ratri", guild=guild, member=member, text_channel=tc, delivery_mode=DELIVERY_AUTO
+                    )
+
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(res1.ok)
+            self.assertTrue(res2.ok)
+            self.assertEqual(res2.delivered_via, DELIVERY_FILE)
+            self.assertEqual(res2.english_text, "Good night!")
+            self.assertEqual(len(tts.calls), 2)
+        finally:
+            store.close()
+
 
 if __name__ == "__main__":
     unittest.main()
