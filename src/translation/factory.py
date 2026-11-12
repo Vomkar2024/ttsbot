@@ -21,6 +21,7 @@ def create_translator_provider(
     normalized = (provider or "auto").strip().lower()
 
     if normalized == "auto":
+        # Prefer OpenAI if configured, otherwise fallback to DeepL
         if (openai_api_key or "").strip():
             return OpenAITranslatorProvider(
                 api_key=openai_api_key,

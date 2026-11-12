@@ -24,7 +24,7 @@ A voice-chat focused Discord bot that listens to English text in chat and speaks
 - **Input**: English text (or Hinglish mix) in configured channel.
 - **Output**: English text displayed in chat + Hindi audio spoken in voice channel.
 - **Fallback**: If no voice channel active, attaches Hindi MP3 file to message.
-- **Translation**: Uses OpenAI-compatible LLM or Google Deep Translator for accurate English→Hindi conversion.
+- **Translation**: Uses OpenAI-compatible LLM or Google DeepL for accurate English→Hindi conversion.
 
 ## Requirements
 - Python 3.10+ (3.13 recommended)
