@@ -48,6 +48,29 @@ class OpenAITranslatorProvider:
         self.base_url = (base_url or DEFAULT_OPENAI_BASE_URL).rstrip("/")
         self.model = (model or DEFAULT_OPENAI_MODEL).strip()
         self.timeout = float(timeout)
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._session_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def _get_session(self) -> aiohttp.ClientSession:
+        loop = asyncio.get_running_loop()
+        if (
+            self._session is None
+            or getattr(self._session, "closed", False) is True
+            or self._session_loop is not loop
+        ):
+            self._session = aiohttp.ClientSession()
+            self._session_loop = loop
+        return self._session
+
+    async def close(self) -> None:
+        if self._session is not None and getattr(self._session, "closed", False) is not True:
+            close_fn = getattr(self._session, "close", None)
+            if callable(close_fn):
+                res = close_fn()
+                if asyncio.iscoroutine(res):
+                    await res
+        self._session = None
+        self._session_loop = None
 
     async def is_available(self) -> bool:
         return bool(self.api_key)
@@ -104,16 +127,21 @@ class OpenAITranslatorProvider:
         }
 
         client_timeout = aiohttp.ClientTimeout(total=effective_timeout)
+        session = self._get_session()
 
         try:
-            async with aiohttp.ClientSession(timeout=client_timeout) as session:
-                async with session.post(endpoint, json=request_body, headers=headers) as resp:
-                    body_text = await resp.text()
-                    if resp.status >= 400:
-                        raise TranslationError(
-                            f"OpenAI translation API returned HTTP {resp.status}: {body_text[:200]}"
-                        )
-                    data = json.loads(body_text)
+            async with session.post(
+                endpoint,
+                json=request_body,
+                headers=headers,
+                timeout=client_timeout,
+            ) as resp:
+                body_text = await resp.text()
+                if resp.status >= 400:
+                    raise TranslationError(
+                        f"OpenAI translation API returned HTTP {resp.status}: {body_text[:200]}"
+                    )
+                data = json.loads(body_text)
         except asyncio.TimeoutError as exc:
             logger.warning(
                 "[OpenAITranslatorProvider] Request timed out after %.1fs",

@@ -237,6 +237,12 @@ class TTSBot(commands.Bot):
             else:
                 self.session_manager.destroy_all()
             self.settings_store.close()
+            close_translator = getattr(self.translator, "close", None)
+            if callable(close_translator):
+                try:
+                    await close_translator()
+                except Exception:
+                    pass
             try:
                 await asyncio.wait_for(self.close(), timeout=5.0)
             except asyncio.TimeoutError:

@@ -286,10 +286,56 @@ class HinglishService:
                 ),
             )
 
-        # 2. Synthesize Hindi audio from translation.hindi_text (same meaning as english_text)
+        # 2. Synthesize Hindi audio from translation.hindi_text (same meaning as english_text).
+        # If voice delivery will need to join/move to member_vc, run join() concurrently with TTS synthesis.
+        should_try_voice = mode == DELIVERY_VOICE or (
+            mode == DELIVERY_AUTO and (member_vc is not None or active_session is not None)
+        )
+        preflight_join_err: Optional[dict] = None
+        joined_session = active_session
+
+        async def _maybe_join_concurrently() -> Optional[dict]:
+            nonlocal joined_session
+            if not should_try_voice or member_vc is None or not self.session_manager or not guild:
+                return None
+            perm_err = self._check_voice_permissions(guild, member_vc)
+            if perm_err:
+                return {"success": False, "error_code": perm_err[0], "message": perm_err[1]}
+            need_join_or_move = active_session is None or str(
+                getattr(active_session, "channel_id", "")
+            ) != str(member_vc.id)
+            if not need_join_or_move:
+                return None
+            try:
+                join_res = await self.session_manager.join(guild, member_vc)
+                joined_session = join_res["session"]
+                return None
+            except VoiceSessionError as exc:
+                return {"success": False, "error_code": exc.code, "message": exc.message}
+            except discord.Forbidden:
+                return {
+                    "success": False,
+                    "error_code": "MISSING_VOICE_PERMISSION",
+                    "message": "Bot lacks **Connect** or **Speak** permission in the voice channel.",
+                }
+            except Exception as exc:
+                return {
+                    "success": False,
+                    "error_code": "VOICE_JOIN_FAILED",
+                    "message": f"Could not join voice channel: {exc}",
+                }
+
+        synth_task = asyncio.create_task(
+            self._synthesize_hindi(translation.hindi_text, voice=hindi_voice)
+        )
+        join_task = asyncio.create_task(_maybe_join_concurrently())
         try:
-            audio = await self._synthesize_hindi(translation.hindi_text, voice=hindi_voice)
+            synth_res, preflight_join_err = await asyncio.gather(synth_task, join_task)
+            audio = synth_res
         except (asyncio.TimeoutError, TimeoutError) as exc:
+            if not join_task.done():
+                join_task.cancel()
+            await asyncio.gather(join_task, return_exceptions=True)
             logger.warning("[HinglishService] Hindi TTS timed out: %s", exc)
             return HinglishResult(
                 source_text=cleaned,
@@ -303,6 +349,9 @@ class HinglishService:
                 ),
             )
         except Exception as exc:
+            if not join_task.done():
+                join_task.cancel()
+            await asyncio.gather(join_task, return_exceptions=True)
             logger.warning("[HinglishService] Hindi TTS failed: %s", exc)
             return HinglishResult(
                 source_text=cleaned,
@@ -316,21 +365,21 @@ class HinglishService:
         # 3. Route delivery: voice channel first when active, else attached audio file
         warnings: List[str] = []
         voice_error_code: Optional[str] = None
-        should_try_voice = mode == DELIVERY_VOICE or (
-            mode == DELIVERY_AUTO and (member_vc is not None or active_session is not None)
-        )
 
         if should_try_voice:
-            voice_outcome = await self._deliver_via_voice(
-                guild=guild,
-                member_vc=member_vc,
-                active_session=active_session,
-                translation=translation,
-                audio=audio,
-                author_name=author_name,
-                author_id=author_id,
-                hindi_voice=hindi_voice,
-            )
+            if preflight_join_err is not None:
+                voice_outcome = preflight_join_err
+            else:
+                voice_outcome = await self._deliver_via_voice(
+                    guild=guild,
+                    member_vc=member_vc,
+                    active_session=joined_session,
+                    translation=translation,
+                    audio=audio,
+                    author_name=author_name,
+                    author_id=author_id,
+                    hindi_voice=hindi_voice,
+                )
             if voice_outcome["success"]:
                 vc_name = voice_outcome.get("channel_name")
                 vc_label = f"#{vc_name}" if vc_name else f"voice channel {voice_outcome['channel_id']}"

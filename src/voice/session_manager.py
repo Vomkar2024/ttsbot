@@ -319,7 +319,7 @@ class VoiceSessionManager:
                         dave_ver = diag_now.get("dave_protocol_version") or 0
                         if dave_ver == 0 or diag_now.get("can_encrypt") is True:
                             break
-                        await asyncio.sleep(0.05)
+                        await asyncio.sleep(0.01)
 
                 diag_after = inspect_voice_connection_state(voice_client)
                 logger.info(

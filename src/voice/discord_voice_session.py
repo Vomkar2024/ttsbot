@@ -3,6 +3,7 @@
 import asyncio
 import io
 import logging
+import queue
 import struct
 import time
 from typing import Any, Callable, Optional
@@ -16,7 +17,7 @@ except ImportError:  # pragma: no cover
 
 from ..constants import DEFAULT_MAX_QUEUE_SIZE, DEFAULT_VOICE_DISCONNECT_GRACE_MS
 from ..tts.espeak_provider import AbortError
-from ..tts.unified_provider import UnifiedTTSProvider, detect_audio_format
+from ..tts.unified_provider import StreamingAudio, UnifiedTTSProvider, detect_audio_format
 from .dave_compat import ensure_opus_loaded, inspect_voice_connection_state
 from .serial_queue import QueueJob, SerialQueue
 
@@ -24,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 # 48,000 Hz * 2 channels * 2 bytes/sample (16-bit stereo PCM expected by Discord)
 _PCM_BYTES_PER_SECOND = 48000 * 2 * 2
+_ORIG_FFMPEG_PCM_AUDIO = discord.FFmpegPCMAudio
+_LOOKAHEAD_PREFETCH_LIMIT = 2
 
 
 class _BoundedStderrBuffer:
@@ -43,6 +46,106 @@ class _BoundedStderrBuffer:
 
     def get_text(self) -> str:
         return bytes(self._buf).decode("utf-8", errors="replace").strip()
+
+
+class _ChunkedAudioStream(io.RawIOBase):
+    """Thread-safe readable byte stream fed incrementally by an async TTS chunk producer."""
+
+    def __init__(self, first_chunk: bytes = b""):
+        self._q: "queue.Queue[Optional[bytes]]" = queue.Queue()
+        self._pending = bytearray(first_chunk) if first_chunk else bytearray()
+        self._eof = False
+        self._closed = False
+        self.total_bytes = len(first_chunk)
+
+    def push(self, chunk: bytes) -> None:
+        if chunk and not self._closed:
+            self.total_bytes += len(chunk)
+            self._q.put(chunk)
+
+    def finish(self) -> None:
+        self._q.put(None)
+
+    def close_stream(self) -> None:
+        self._closed = True
+        self._q.put(None)
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        if self._closed:
+            return b""
+        if size == 0:
+            return b""
+        if not self._pending and not self._eof:
+            item = self._q.get()
+            if item is None:
+                self._eof = True
+                return b""
+            self._pending.extend(item)
+        if not self._pending:
+            return b""
+        if size is None or size < 0:
+            out = bytes(self._pending)
+            self._pending.clear()
+            return out
+        n = min(size, len(self._pending))
+        out = bytes(self._pending[:n])
+        del self._pending[:n]
+        return out
+
+    def readinto(self, b: bytearray) -> int:
+        data = self.read(len(b))
+        if not data:
+            return 0
+        b[: len(data)] = data
+        return len(data)
+
+
+class _StreamingFFmpegPCMAudio(discord.FFmpegPCMAudio):
+    """FFmpegPCMAudio subclass that flushes stdin after each chunk for minimal streaming latency."""
+
+    def _pipe_writer(self, source: io.BufferedIOBase) -> None:
+        while self._process:
+            data = source.read(self.BLOCKSIZE)
+            if not data:
+                if self._stdin is not None:
+                    try:
+                        self._stdin.close()
+                    except Exception:
+                        pass
+                return
+            try:
+                if self._stdin is not None:
+                    self._stdin.write(data)
+                    self._stdin.flush()
+            except Exception:
+                try:
+                    self._process.terminate()
+                except Exception:
+                    pass
+                return
+
+    def cleanup(self) -> None:
+        try:
+            source = getattr(self, "_source_stream", None)
+            if source is not None and hasattr(source, "close_stream"):
+                source.close_stream()
+        except Exception:
+            pass
+        super().cleanup()
+
+
+def _build_ffmpeg_flags(audio_format: str) -> tuple[str, str]:
+    """Builds low-latency FFmpeg input/output flags without dropping short inputs."""
+    fmt = (audio_format or "").strip().lower()
+    if fmt in ("mp3", "wav", "ogg"):
+        before_options = f"-f {fmt} -probesize 1024 -analyzeduration 0"
+    else:
+        before_options = "-probesize 4096 -analyzeduration 0"
+    options = "-flush_packets 1"
+    return before_options, options
 
 
 class _DiagnosticAudioSource(discord.AudioSource):
@@ -162,6 +265,7 @@ class DiscordVoiceSession:
             guild_id=self.guild_id,
             max_size=self.max_queue_size,
             on_process_job=self._process_job,
+            on_enqueue=self._on_job_enqueued,
             loop=vc_loop,
         )
 
@@ -230,9 +334,129 @@ class DiscordVoiceSession:
             dave_ver = diag.get("dave_protocol_version") or 0
             if dave_ver == 0 or diag.get("can_encrypt") is True:
                 return diag
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.01)
 
         return inspect_voice_connection_state(self.voice_client)
+
+    def _on_job_enqueued(self, job: QueueJob) -> None:
+        """Starts background pre-synthesis for queued jobs when another job is already active."""
+        if self.is_destroyed or job.audio_bytes is not None:
+            return
+        if self.serial_queue.current_job is None and len(self.serial_queue.pending_queue) <= 1:
+            return
+        if len(self.serial_queue.pending_queue) > _LOOKAHEAD_PREFETCH_LIMIT:
+            return
+        self._start_prefetch_for_job(job)
+
+    def _schedule_lookahead_prefetch(self) -> None:
+        """Ensures up to _LOOKAHEAD_PREFETCH_LIMIT pending jobs are pre-synthesizing while audio plays."""
+        if self.is_destroyed:
+            return
+        for pending_job in self.serial_queue.pending_queue[:_LOOKAHEAD_PREFETCH_LIMIT]:
+            self._start_prefetch_for_job(pending_job)
+
+    def _start_prefetch_for_job(self, job: QueueJob) -> None:
+        if (
+            self.is_destroyed
+            or job.audio_bytes is not None
+            or job.data.get("_prefetch_task") is not None
+        ):
+            return
+        text_to_speak = job.spoken_text or job.text
+        if not text_to_speak:
+            return
+
+        try:
+            loop = self.serial_queue._resolve_loop()
+        except Exception:
+            return
+        if not loop.is_running():
+            return
+
+        def _spawn() -> None:
+            if (
+                self.is_destroyed
+                or job.audio_bytes is not None
+                or job.data.get("_prefetch_task") is not None
+            ):
+                return
+            prefetch_cancel = asyncio.Event()
+            job.data["_prefetch_cancel"] = prefetch_cancel
+
+            async def _run_prefetch() -> dict:
+                audio_bytes, audio_format, used_engine, used_voice, fallback_note = (
+                    await self._synthesize_buffered(
+                        text_to_speak=text_to_speak,
+                        language=job.language,
+                        voice=job.voice,
+                        cancel_event=prefetch_cancel,
+                    )
+                )
+                return {
+                    "audio_bytes": audio_bytes,
+                    "audio_format": audio_format,
+                    "used_engine": used_engine,
+                    "used_voice": used_voice,
+                    "fallback_note": fallback_note,
+                }
+
+            task = loop.create_task(_run_prefetch())
+            job.data["_prefetch_task"] = task
+
+            def _cancel_prefetch() -> None:
+                prefetch_cancel.set()
+                if not task.done():
+                    task.cancel()
+
+            job.add_cancel_hook(_cancel_prefetch)
+
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is loop:
+            _spawn()
+        else:
+            loop.call_soon_threadsafe(_spawn)
+
+    async def _synthesize_buffered(
+        self,
+        *,
+        text_to_speak: str,
+        language: str,
+        voice: str,
+        cancel_event: asyncio.Event,
+    ) -> tuple[bytes, str, str, str, str]:
+        synth_audio_fn = getattr(self.tts_provider, "synthesize_audio", None)
+        if callable(synth_audio_fn):
+            synth_res = await synth_audio_fn(
+                text=text_to_speak,
+                language=language,
+                voice=voice,
+                cancel_event=cancel_event,
+            )
+            audio_bytes = synth_res.data
+            audio_format = synth_res.audio_format or detect_audio_format(audio_bytes)
+            used_engine = synth_res.engine or getattr(self.tts_provider, "default_engine", "tts")
+            used_voice = synth_res.voice_used or voice
+            fallback_note = (
+                f" (fallback from {synth_res.fallback_from})"
+                if getattr(synth_res, "fallback_from", None)
+                else ""
+            )
+            return audio_bytes, audio_format, used_engine, used_voice, fallback_note
+
+        audio_bytes = await self.tts_provider.synthesize(
+            text=text_to_speak,
+            language=language,
+            voice=voice,
+            cancel_event=cancel_event,
+        )
+        audio_format = detect_audio_format(audio_bytes)
+        used_engine = getattr(self.tts_provider, "default_engine", "tts")
+        used_voice = voice
+        return audio_bytes, audio_format, used_engine, used_voice, ""
 
     def _check_voice_output_health(self) -> None:
         """Checks Discord server mute / self mute / Stage suppress flags safely."""
@@ -281,7 +505,14 @@ class DiscordVoiceSession:
             preview,
         )
 
-        # Stage 2 & 3: Voice Pack Selection & Audio Synthesis
+        # Stage 2 & 3: Voice Pack Selection & Audio Synthesis (or Live Stream Open)
+        stream_handle: Optional[StreamingAudio] = None
+        audio_bytes: Optional[bytes] = None
+        audio_format: str = "mp3"
+        used_engine: str = ""
+        used_voice: str = job.voice or "default"
+        fallback_note: str = ""
+
         if job.audio_bytes is not None:
             audio_bytes = job.audio_bytes
             audio_format = detect_audio_format(audio_bytes)
@@ -320,82 +551,154 @@ class DiscordVoiceSession:
                     job.language,
                 )
 
-            try:
-                synth_audio_fn = getattr(self.tts_provider, "synthesize_audio", None)
-                if callable(synth_audio_fn):
-                    synth_res = await synth_audio_fn(
-                        text=text_to_speak,
-                        language=job.language,
-                        voice=job.voice,
-                        cancel_event=cancel_event,
+            # Check if a lookahead pre-synthesis task was already started while previous audio played
+            prefetch_task: Optional[asyncio.Task] = job.data.get("_prefetch_task")
+            prefetch_cancel: Optional[asyncio.Event] = job.data.get("_prefetch_cancel")
+            if prefetch_task is not None:
+                cancel_waiter_pf = asyncio.create_task(cancel_event.wait())
+                try:
+                    done_pf, _ = await asyncio.wait(
+                        [prefetch_task, cancel_waiter_pf],
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
-                    audio_bytes = synth_res.data
-                    audio_format = synth_res.audio_format or detect_audio_format(audio_bytes)
-                    used_engine = synth_res.engine or getattr(self.tts_provider, "default_engine", "tts")
-                    used_voice = synth_res.voice_used or job.voice
-                    fallback_note = (
-                        f" (fallback from {synth_res.fallback_from})"
-                        if getattr(synth_res, "fallback_from", None)
-                        else ""
+                    if cancel_event.is_set():
+                        if prefetch_cancel is not None:
+                            prefetch_cancel.set()
+                        if not prefetch_task.done():
+                            prefetch_task.cancel()
+                        raise AbortError("Job cancelled while awaiting pre-synthesized audio")
+                    if prefetch_task in done_pf and not prefetch_task.cancelled():
+                        pf_exc = prefetch_task.exception()
+                        if pf_exc is None:
+                            pf_res = prefetch_task.result()
+                            audio_bytes = pf_res["audio_bytes"]
+                            audio_format = pf_res["audio_format"]
+                            used_engine = pf_res["used_engine"]
+                            used_voice = pf_res["used_voice"]
+                            fallback_note = pf_res["fallback_note"]
+                        elif isinstance(pf_exc, AbortError):
+                            raise pf_exc
+                        else:
+                            logger.debug(
+                                "[AudioPipeline Guild %s Job #%s] Prefetch failed (%s); falling back to direct synthesis.",
+                                self.guild_id,
+                                job.id,
+                                pf_exc,
+                            )
+                finally:
+                    cancel_waiter_pf.cancel()
+
+            if audio_bytes is None:
+                try:
+                    open_stream_fn = getattr(self.tts_provider, "open_audio_stream", None)
+                    if callable(open_stream_fn):
+                        stream_handle = await open_stream_fn(
+                            text=text_to_speak,
+                            language=job.language,
+                            voice=job.voice,
+                            cancel_event=cancel_event,
+                        )
+                        audio_format = stream_handle.audio_format
+                        used_engine = stream_handle.engine
+                        used_voice = stream_handle.voice_used or job.voice
+                        fallback_note = (
+                            f" (fallback from {stream_handle.fallback_from})"
+                            if stream_handle.fallback_from
+                            else ""
+                        )
+                        if not stream_handle.is_streaming:
+                            audio_bytes = stream_handle.first_chunk
+                            stream_handle = None
+                    else:
+                        (
+                            audio_bytes,
+                            audio_format,
+                            used_engine,
+                            used_voice,
+                            fallback_note,
+                        ) = await self._synthesize_buffered(
+                            text_to_speak=text_to_speak,
+                            language=job.language,
+                            voice=job.voice,
+                            cancel_event=cancel_event,
+                        )
+                except AbortError:
+                    logger.info(
+                        "[AudioPipeline Guild %s Job #%s] [Stage 3/6: Synthesis Cancelled] Aborted by user.",
+                        self.guild_id,
+                        job.id,
                     )
-                else:
-                    audio_bytes = await self.tts_provider.synthesize(
-                        text=text_to_speak,
-                        language=job.language,
-                        voice=job.voice,
-                        cancel_event=cancel_event,
+                    raise
+                except Exception as synth_err:
+                    logger.error(
+                        "[AudioPipeline Guild %s Job #%s] [Stage 3/6: Audio FAILED] TTS synthesis failed: %s",
+                        self.guild_id,
+                        job.id,
+                        synth_err,
+                        exc_info=True,
                     )
-                    audio_format = detect_audio_format(audio_bytes)
-                    used_engine = getattr(self.tts_provider, "default_engine", "tts")
-                    used_voice = job.voice
-                    fallback_note = ""
-            except AbortError:
-                logger.info(
-                    "[AudioPipeline Guild %s Job #%s] [Stage 3/6: Synthesis Cancelled] Aborted by user.",
-                    self.guild_id,
-                    job.id,
-                )
-                raise
-            except Exception as synth_err:
-                logger.error(
-                    "[AudioPipeline Guild %s Job #%s] [Stage 3/6: Audio FAILED] TTS synthesis failed: %s",
-                    self.guild_id,
-                    job.id,
-                    synth_err,
-                    exc_info=True,
-                )
-                raise
+                    raise
 
         if cancel_event.is_set():
+            if stream_handle is not None and stream_handle.chunk_iter is not None:
+                aclose = getattr(stream_handle.chunk_iter, "aclose", None)
+                if callable(aclose):
+                    try:
+                        await aclose()
+                    except Exception:
+                        pass
             raise AbortError("Job aborted after synthesis")
 
-        try:
-            _validate_audio_bytes(audio_bytes, audio_format)
-        except Exception as val_err:
-            logger.error(
-                "[AudioPipeline Guild %s Job #%s] [Stage 3/6: Audio FAILED] Invalid audio output: %s",
+        if stream_handle is not None:
+            logger.info(
+                "[AudioPipeline Guild %s Job #%s] [Stage 3/6: Audio Stream Ready] "
+                "Engine=%s%s | VoiceUsed=%s | Format=%s | FirstChunk=%d bytes (live streaming)",
                 self.guild_id,
                 job.id,
-                val_err,
+                used_engine,
+                fallback_note,
+                used_voice,
+                audio_format,
+                len(stream_handle.first_chunk),
             )
-            raise
+            input_desc = f"live-stream ({len(stream_handle.first_chunk)}+ bytes {audio_format})"
+        else:
+            assert audio_bytes is not None
+            try:
+                _validate_audio_bytes(audio_bytes, audio_format)
+            except Exception as val_err:
+                logger.error(
+                    "[AudioPipeline Guild %s Job #%s] [Stage 3/6: Audio FAILED] Invalid audio output: %s",
+                    self.guild_id,
+                    job.id,
+                    val_err,
+                )
+                raise
 
-        est_duration_sec = _estimate_audio_duration_sec(audio_bytes, audio_format)
-        logger.info(
-            "[AudioPipeline Guild %s Job #%s] [Stage 3/6: Audio Generated] "
-            "Engine=%s%s | VoiceUsed=%s | Format=%s | Size=%d bytes | EstDuration=%.2fs",
-            self.guild_id,
-            job.id,
-            used_engine,
-            fallback_note,
-            used_voice,
-            audio_format,
-            len(audio_bytes),
-            est_duration_sec,
-        )
+            est_duration_sec = _estimate_audio_duration_sec(audio_bytes, audio_format)
+            logger.info(
+                "[AudioPipeline Guild %s Job #%s] [Stage 3/6: Audio Generated] "
+                "Engine=%s%s | VoiceUsed=%s | Format=%s | Size=%d bytes | EstDuration=%.2fs",
+                self.guild_id,
+                job.id,
+                used_engine,
+                fallback_note,
+                used_voice,
+                audio_format,
+                len(audio_bytes),
+                est_duration_sec,
+            )
+            input_desc = f"{len(audio_bytes)} bytes ({audio_format})"
 
         # Verify voice client before creating FFmpeg subprocess
         if not self.voice_client or not self.voice_client.is_connected():
+            if stream_handle is not None and stream_handle.chunk_iter is not None:
+                aclose = getattr(stream_handle.chunk_iter, "aclose", None)
+                if callable(aclose):
+                    try:
+                        await aclose()
+                    except Exception:
+                        pass
             logger.error(
                 "[AudioPipeline Guild %s Job #%s] [Stage 4/6: FFmpeg/Source FAILED] "
                 "Voice client disconnected before source creation.",
@@ -406,25 +709,92 @@ class DiscordVoiceSession:
 
         # Stage 4: FFmpeg / AudioSource Creation
         ffmpeg_stderr_buf = _BoundedStderrBuffer()
+        chunk_stream: Optional[_ChunkedAudioStream] = None
+        pump_task: Optional[asyncio.Task] = None
+        stream_error: Optional[BaseException] = None
+        before_opts, after_opts = _build_ffmpeg_flags(audio_format)
+
         try:
-            raw_source = discord.FFmpegPCMAudio(
-                io.BytesIO(audio_bytes),
-                pipe=True,
-                executable=self.ffmpeg_path,
-                stderr=ffmpeg_stderr_buf,
-            )
+            if stream_handle is not None:
+                chunk_stream = _ChunkedAudioStream(stream_handle.first_chunk)
+                use_flushing_cls = discord.FFmpegPCMAudio is _ORIG_FFMPEG_PCM_AUDIO
+                ffmpeg_cls = _StreamingFFmpegPCMAudio if use_flushing_cls else discord.FFmpegPCMAudio
+                raw_source = ffmpeg_cls(
+                    chunk_stream,
+                    pipe=True,
+                    executable=self.ffmpeg_path,
+                    stderr=ffmpeg_stderr_buf,
+                    before_options=before_opts,
+                    options=after_opts,
+                )
+                if use_flushing_cls:
+                    setattr(raw_source, "_source_stream", chunk_stream)
+
+                async def _pump_chunks() -> None:
+                    nonlocal stream_error
+                    collected = bytearray(stream_handle.first_chunk)
+                    completed_cleanly = False
+                    try:
+                        assert stream_handle.chunk_iter is not None
+                        async for next_chunk in stream_handle.chunk_iter:
+                            if self.is_destroyed or cancel_event.is_set():
+                                break
+                            if next_chunk:
+                                collected.extend(next_chunk)
+                                chunk_stream.push(next_chunk)
+                        else:
+                            completed_cleanly = not self.is_destroyed and not cancel_event.is_set()
+                    except AbortError:
+                        pass
+                    except Exception as pump_exc:
+                        stream_error = pump_exc
+                        logger.warning(
+                            "[AudioPipeline Guild %s Job #%s] Live TTS chunk stream error: %s",
+                            self.guild_id,
+                            job.id,
+                            pump_exc,
+                        )
+                    finally:
+                        chunk_stream.finish()
+                        aclose = getattr(stream_handle.chunk_iter, "aclose", None)
+                        if callable(aclose):
+                            try:
+                                await aclose()
+                            except Exception:
+                                pass
+                        if completed_cleanly and callable(stream_handle.on_complete):
+                            try:
+                                stream_handle.on_complete(bytes(collected))
+                            except Exception:
+                                pass
+
+                pump_task = asyncio.create_task(_pump_chunks())
+            else:
+                assert audio_bytes is not None
+                raw_source = discord.FFmpegPCMAudio(
+                    io.BytesIO(audio_bytes),
+                    pipe=True,
+                    executable=self.ffmpeg_path,
+                    stderr=ffmpeg_stderr_buf,
+                    before_options=before_opts,
+                    options=after_opts,
+                )
+
             vol_source = discord.PCMVolumeTransformer(raw_source, volume=1.0)
             audio_source = _DiagnosticAudioSource(vol_source, raw_source=raw_source)
             logger.info(
                 "[AudioPipeline Guild %s Job #%s] [Stage 4/6: FFmpeg/Source Created] "
-                "Executable=\"%s\" | Input=%d bytes (%s) | TargetPCM=48kHz-stereo-s16le",
+                "Executable=\"%s\" | Input=%s | TargetPCM=48kHz-stereo-s16le",
                 self.guild_id,
                 job.id,
                 self.ffmpeg_path,
-                len(audio_bytes),
-                audio_format,
+                input_desc,
             )
         except Exception as e:
+            if pump_task is not None and not pump_task.done():
+                pump_task.cancel()
+            if chunk_stream is not None:
+                chunk_stream.close_stream()
             logger.error(
                 "[AudioPipeline Guild %s Job #%s] [Stage 4/6: FFmpeg/Source FAILED] "
                 "Failed creating FFmpegPCMAudio (executable=\"%s\"): %s",
@@ -439,6 +809,10 @@ class DiscordVoiceSession:
         # Stage 5: Transport Checks & Playback Start
         await self._wait_for_dave_ready(cancel_event=cancel_event, max_wait_sec=2.0)
         if cancel_event.is_set():
+            if pump_task is not None and not pump_task.done():
+                pump_task.cancel()
+            if chunk_stream is not None:
+                chunk_stream.close_stream()
             try:
                 audio_source.cleanup()
             except Exception:
@@ -465,10 +839,13 @@ class DiscordVoiceSession:
             # Stop any lingering player and yield briefly so SpeakingState.none doesn't race SpeakingState.voice
             if self.voice_client.is_playing() or self.voice_client.is_paused():
                 self.voice_client.stop()
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.01)
 
             self.voice_client.play(audio_source, after=_after_play)
             play_started = True
+
+            # Pre-synthesize upcoming queued items while this audio is playing
+            self._schedule_lookahead_prefetch()
 
             logger.info(
                 "[AudioPipeline Guild %s Job #%s] [Stage 5/6: Playback Started] "
@@ -493,6 +870,10 @@ class DiscordVoiceSession:
                 task.cancel()
 
             if cancel_event.is_set():
+                if pump_task is not None and not pump_task.done():
+                    pump_task.cancel()
+                if chunk_stream is not None:
+                    chunk_stream.close_stream()
                 try:
                     if self.voice_client and (
                         self.voice_client.is_playing() or self.voice_client.is_paused()
@@ -510,11 +891,15 @@ class DiscordVoiceSession:
                 )
                 raise AbortError("Playback cancelled by user")
 
-            # Flush FFmpeg stderr pipe thread briefly if present
+            if pump_task is not None and not pump_task.done():
+                await asyncio.gather(pump_task, return_exceptions=True)
+
+            # Flush FFmpeg stderr pipe thread briefly if still alive
             reader_thread = getattr(raw_source, "_pipe_reader_thread", None)
             if reader_thread is not None and hasattr(reader_thread, "join"):
                 try:
-                    reader_thread.join(timeout=0.05)
+                    if not hasattr(reader_thread, "is_alive") or reader_thread.is_alive():
+                        reader_thread.join(timeout=0.01)
                 except Exception:
                     pass
 
@@ -529,7 +914,7 @@ class DiscordVoiceSession:
             pcm_duration_sec = audio_source.pcm_bytes / float(_PCM_BYTES_PER_SECOND)
             source_err = audio_source._current_error
 
-            effective_error: Optional[BaseException] = play_error or source_err
+            effective_error: Optional[BaseException] = play_error or source_err or stream_error
             if effective_error is None and ffmpeg_rc not in (None, 0):
                 effective_error = RuntimeError(
                     f"FFmpeg exited with status {ffmpeg_rc}"
@@ -602,7 +987,11 @@ class DiscordVoiceSession:
                 )
             raise
         finally:
+            if pump_task is not None and not pump_task.done():
+                pump_task.cancel()
             if not play_started:
+                if chunk_stream is not None:
+                    chunk_stream.close_stream()
                 try:
                     audio_source.cleanup()
                 except Exception:
@@ -630,11 +1019,14 @@ class DiscordVoiceSession:
                 volume=volume,
             )
             stderr_buf = _BoundedStderrBuffer()
+            before_opts, after_opts = _build_ffmpeg_flags("wav")
             raw_source = discord.FFmpegPCMAudio(
                 io.BytesIO(wav_bytes),
                 pipe=True,
                 executable=self.ffmpeg_path,
                 stderr=stderr_buf,
+                before_options=before_opts,
+                options=after_opts,
             )
             audio_source: discord.AudioSource = _DiagnosticAudioSource(
                 discord.PCMVolumeTransformer(raw_source, volume=1.0),
@@ -661,7 +1053,7 @@ class DiscordVoiceSession:
         try:
             if self.voice_client.is_playing() or self.voice_client.is_paused():
                 self.voice_client.stop()
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.01)
 
             self.voice_client.play(audio_source, after=_after_play)
             play_started = True
@@ -724,4 +1116,11 @@ class DiscordVoiceSession:
             pass
 
 
-__all__ = ["DiscordVoiceSession", "_DiagnosticAudioSource", "_BoundedStderrBuffer"]
+__all__ = [
+    "DiscordVoiceSession",
+    "_DiagnosticAudioSource",
+    "_BoundedStderrBuffer",
+    "_ChunkedAudioStream",
+    "_StreamingFFmpegPCMAudio",
+    "_build_ffmpeg_flags",
+]

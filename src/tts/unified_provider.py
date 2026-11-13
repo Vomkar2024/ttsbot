@@ -1,9 +1,10 @@
 """Unified Text-to-Speech provider routing between Edge-TTS, gTTS, and eSpeak NG with graceful fallback."""
 
 import asyncio
+from collections import OrderedDict
 from dataclasses import dataclass
 import logging
-from typing import Any, List, Optional
+from typing import Any, AsyncIterator, Callable, List, Optional
 
 from ..constants import (
     DEFAULT_EDGE_TTS_PITCH,
@@ -32,6 +33,23 @@ class SynthesizedAudio:
     engine: str = ""
     voice_used: str = ""
     fallback_from: Optional[str] = None
+
+
+@dataclass
+class StreamingAudio:
+    """Audio stream handle yielding a first chunk immediately while streaming remaining chunks."""
+
+    first_chunk: bytes
+    chunk_iter: Optional[AsyncIterator[bytes]]
+    audio_format: str
+    engine: str
+    voice_used: str
+    fallback_from: Optional[str] = None
+    on_complete: Optional[Callable[[bytes], None]] = None
+
+    @property
+    def is_streaming(self) -> bool:
+        return self.chunk_iter is not None
 
 
 def detect_audio_format(audio_bytes: bytes) -> str:
@@ -102,6 +120,14 @@ class UnifiedTTSProvider:
             tts_bin=tts_bin,
             allow_mock_fallback=self.allow_mock_fallback,
         )
+
+        # Bounded in-memory LRU audio cache for instant playback of repeated messages
+        self._cache_enabled = bool(opts.get("enableCache", opts.get("enable_cache", True)))
+        self._cache_max_entries = max(0, int(opts.get("cacheMaxEntries", 128)))
+        self._cache_max_total_bytes = max(0, int(opts.get("cacheMaxTotalBytes", 4 * 1024 * 1024)))
+        self._cache_max_item_bytes = max(0, int(opts.get("cacheMaxItemBytes", 256 * 1024)))
+        self._audio_cache: "OrderedDict[tuple, tuple[bytes, str, str, str]]" = OrderedDict()
+        self._audio_cache_bytes = 0
 
     @property
     def tts_bin(self) -> str:
@@ -244,6 +270,70 @@ class UnifiedTTSProvider:
             signal=signal,
         )
 
+    def _is_engine_patched(self, engine_name: str) -> bool:
+        if engine_name == "edge-tts":
+            obj = getattr(self, "edge_tts", None)
+        elif engine_name == "gtts":
+            obj = getattr(self, "gtts", None)
+        else:
+            obj = getattr(self, "espeak", None)
+        if obj is None:
+            return False
+        d = getattr(obj, "__dict__", {})
+        return "synthesize" in d or "stream_chunks" in d
+
+    def _make_cache_key(
+        self,
+        *,
+        primary_engine: str,
+        resolved_voice: str,
+        language: Optional[str],
+        speed: Optional[int],
+        pitch: Optional[int],
+        text: str,
+    ) -> tuple:
+        lang_norm = (language or DEFAULT_LANGUAGE).strip().lower() or DEFAULT_LANGUAGE
+        text_norm = " ".join((text or "").split())
+        rate_str = getattr(self.edge_tts, "default_rate", DEFAULT_EDGE_TTS_RATE)
+        pitch_str = getattr(self.edge_tts, "default_pitch", DEFAULT_EDGE_TTS_PITCH)
+        return (primary_engine, resolved_voice, lang_norm, speed, pitch, rate_str, pitch_str, text_norm)
+
+    def _get_cached_audio(self, cache_key: tuple) -> Optional[tuple[bytes, str, str, str]]:
+        if not self._cache_enabled or self._cache_max_entries <= 0:
+            return None
+        entry = self._audio_cache.get(cache_key)
+        if entry is not None:
+            self._audio_cache.move_to_end(cache_key)
+        return entry
+
+    def _store_cached_audio(
+        self,
+        cache_key: tuple,
+        audio_bytes: bytes,
+        engine_used: str,
+        voice_used: str,
+        audio_format: str,
+    ) -> None:
+        if (
+            not self._cache_enabled
+            or self._cache_max_entries <= 0
+            or not audio_bytes
+            or len(audio_bytes) > self._cache_max_item_bytes
+            or len(audio_bytes) > self._cache_max_total_bytes
+        ):
+            return
+        old = self._audio_cache.pop(cache_key, None)
+        if old is not None:
+            self._audio_cache_bytes -= len(old[0])
+        self._audio_cache[cache_key] = (audio_bytes, engine_used, voice_used, audio_format)
+        self._audio_cache_bytes += len(audio_bytes)
+        while (
+            len(self._audio_cache) > self._cache_max_entries
+            or self._audio_cache_bytes > self._cache_max_total_bytes
+        ):
+            _, evicted = self._audio_cache.popitem(last=False)
+            self._audio_cache_bytes -= len(evicted[0])
+
     async def _synthesize_internal(
         self,
         text: str,
@@ -266,6 +356,21 @@ class UnifiedTTSProvider:
         )
         engine_order: List[str] = selection["engine_order"]
         primary_engine = selection["primary_engine"]
+        any_patched = any(self._is_engine_patched(eng) for eng in engine_order)
+
+        cache_key = self._make_cache_key(
+            primary_engine=primary_engine,
+            resolved_voice=selection["resolved_voice"],
+            language=language,
+            speed=speed,
+            pitch=pitch,
+            text=text,
+        )
+        if not options and not any_patched:
+            cached = self._get_cached_audio(cache_key)
+            if cached is not None:
+                data, used_eng, used_voice, _ = cached
+                return data, used_eng, used_voice, None
 
         last_err: Optional[Exception] = None
         for idx, candidate in enumerate(engine_order):
@@ -298,6 +403,14 @@ class UnifiedTTSProvider:
 
                 voice_used = self._describe_voice_for_engine(candidate, language, eff_voice)
                 fallback_from = primary_engine if idx > 0 else None
+                if not options and not any_patched and fallback_from is None:
+                    self._store_cached_audio(
+                        cache_key,
+                        audio_bytes,
+                        candidate,
+                        voice_used,
+                        detect_audio_format(audio_bytes),
+                    )
                 return audio_bytes, candidate, voice_used, fallback_from
             except AbortError:
                 raise
@@ -313,6 +426,189 @@ class UnifiedTTSProvider:
                         candidate,
                         err,
                         next_eng,
+                    )
+
+        assert last_err is not None
+        raise last_err
+
+    async def open_audio_stream(
+        self,
+        text: str,
+        options: Optional[dict] = None,
+        *,
+        engine: Optional[str] = None,
+        language: Optional[str] = None,
+        voice: Optional[str] = None,
+        speed: Optional[int] = None,
+        pitch: Optional[int] = None,
+        cancel_event: Optional[asyncio.Event] = None,
+        signal: Any = None,
+    ) -> StreamingAudio:
+        """Opens a low-latency audio stream, returning as soon as the first chunk or cached buffer is ready."""
+        opts = options or {}
+        explicit_engine = engine or opts.get("engine")
+        selection = self.resolve_selection(
+            engine=explicit_engine,
+            language=language,
+            voice=voice,
+        )
+        engine_order: List[str] = selection["engine_order"]
+        primary_engine = selection["primary_engine"]
+        any_patched = any(self._is_engine_patched(eng) for eng in engine_order)
+
+        cache_key = self._make_cache_key(
+            primary_engine=primary_engine,
+            resolved_voice=selection["resolved_voice"],
+            language=language,
+            speed=speed,
+            pitch=pitch,
+            text=text,
+        )
+        if not options and not any_patched:
+            cached = self._get_cached_audio(cache_key)
+            if cached is not None:
+                data, used_eng, used_voice, fmt = cached
+                return StreamingAudio(
+                    first_chunk=data,
+                    chunk_iter=None,
+                    audio_format=fmt,
+                    engine=used_eng,
+                    voice_used=used_voice,
+                    fallback_from=None,
+                )
+
+        last_err: Optional[Exception] = None
+        for idx, candidate in enumerate(engine_order):
+            eff_voice = voice
+            if idx > 0 and voice:
+                v_str = voice.strip()
+                if candidate != "espeak" and v_str.startswith("+"):
+                    eff_voice = "default"
+                elif candidate != "edge-tts" and (
+                    v_str.lower().startswith("edge:") or v_str.lower().endswith("neural")
+                ):
+                    eff_voice = "default"
+
+            if (
+                candidate == "edge-tts"
+                and not self._is_engine_patched("edge-tts")
+                and hasattr(self.edge_tts, "stream_chunks")
+            ):
+                aiter = self.edge_tts.stream_chunks(
+                    text,
+                    options,
+                    language=language,
+                    voice=eff_voice,
+                    speed=speed,
+                    pitch=pitch,
+                    cancel_event=cancel_event,
+                    signal=signal,
+                ).__aiter__()
+                try:
+                    first_chunk = b""
+                    while not first_chunk:
+                        first_chunk = await aiter.__anext__()
+                    voice_used = self._describe_voice_for_engine(candidate, language, eff_voice)
+                    fallback_from = primary_engine if idx > 0 else None
+                    fmt = detect_audio_format(first_chunk)
+
+                    def _on_complete(full_bytes: bytes, _ck=cache_key, _eng=candidate, _vu=voice_used, _fmt=fmt) -> None:
+                        if not options and not any_patched and fallback_from is None:
+                            self._store_cached_audio(_ck, full_bytes, _eng, _vu, _fmt)
+
+                    return StreamingAudio(
+                        first_chunk=first_chunk,
+                        chunk_iter=aiter,
+                        audio_format=fmt,
+                        engine=candidate,
+                        voice_used=voice_used,
+                        fallback_from=fallback_from,
+                        on_complete=_on_complete,
+                    )
+                except AbortError:
+                    aclose = getattr(aiter, "aclose", None)
+                    if callable(aclose):
+                        try:
+                            await aclose()
+                        except Exception:
+                            pass
+                    raise
+                except ValueError:
+                    aclose = getattr(aiter, "aclose", None)
+                    if callable(aclose):
+                        try:
+                            await aclose()
+                        except Exception:
+                            pass
+                    raise
+                except StopAsyncIteration:
+                    err = RuntimeError("Edge-TTS produced empty audio stream")
+                    last_err = err
+                    if idx + 1 < len(engine_order):
+                        logger.warning(
+                            "[UnifiedTTSProvider] %s synthesis failed (%s). Falling back to %s...",
+                            candidate,
+                            err,
+                            engine_order[idx + 1],
+                        )
+                    continue
+                except Exception as err:
+                    aclose = getattr(aiter, "aclose", None)
+                    if callable(aclose):
+                        try:
+                            await aclose()
+                        except Exception:
+                            pass
+                    last_err = err
+                    if idx + 1 < len(engine_order):
+                        logger.warning(
+                            "[UnifiedTTSProvider] %s synthesis failed (%s). Falling back to %s...",
+                            candidate,
+                            err,
+                            engine_order[idx + 1],
+                        )
+                    continue
+
+            try:
+                audio_bytes = await self._synthesize_with_engine(
+                    candidate,
+                    text,
+                    options,
+                    language=language,
+                    voice=eff_voice,
+                    speed=speed,
+                    pitch=pitch,
+                    cancel_event=cancel_event,
+                    signal=signal,
+                )
+                if not audio_bytes:
+                    raise RuntimeError(f"Engine '{candidate}' returned empty audio buffer (0 bytes)")
+
+                voice_used = self._describe_voice_for_engine(candidate, language, eff_voice)
+                fallback_from = primary_engine if idx > 0 else None
+                fmt = detect_audio_format(audio_bytes)
+                if not options and not any_patched and fallback_from is None:
+                    self._store_cached_audio(cache_key, audio_bytes, candidate, voice_used, fmt)
+                return StreamingAudio(
+                    first_chunk=audio_bytes,
+                    chunk_iter=None,
+                    audio_format=fmt,
+                    engine=candidate,
+                    voice_used=voice_used,
+                    fallback_from=fallback_from,
+                )
+            except AbortError:
+                raise
+            except ValueError:
+                raise
+            except Exception as err:
+                last_err = err
+                if idx + 1 < len(engine_order):
+                    logger.warning(
+                        "[UnifiedTTSProvider] %s synthesis failed (%s). Falling back to %s...",
+                        candidate,
+                        err,
+                        engine_order[idx + 1],
                     )
 
         assert last_err is not None
@@ -394,6 +690,7 @@ __all__ = [
     "EspeakProvider",
     "AbortError",
     "SynthesizedAudio",
+    "StreamingAudio",
     "detect_audio_format",
     "normalize_engine_name",
 ]

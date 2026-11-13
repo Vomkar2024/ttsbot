@@ -30,11 +30,25 @@ class QueueJob:
         self.future: asyncio.Future = loop.create_future()
         # Suppress unhandled future exception warnings if caller does not immediately await
         self.future.add_done_callback(self._silence_unhandled)
+        self._cancel_hooks: List[Callable[[], None]] = []
+
+    def add_cancel_hook(self, fn: Callable[[], None]) -> None:
+        if callable(fn):
+            self._cancel_hooks.append(fn)
+
+    def cancel_pending_work(self) -> None:
+        while self._cancel_hooks:
+            hook = self._cancel_hooks.pop(0)
+            try:
+                hook()
+            except Exception:
+                pass
 
     def _silence_unhandled(self, fut: asyncio.Future) -> None:
         try:
-            fut.exception()
-        except Exception:
+            if not fut.cancelled():
+                fut.exception()
+        except (Exception, asyncio.CancelledError):
             pass
 
     @property
@@ -80,6 +94,7 @@ class SerialQueue:
         guild_id: str,
         max_size: int = DEFAULT_MAX_QUEUE_SIZE,
         on_process_job: Optional[Callable[[QueueJob, asyncio.Event], Any]] = None,
+        on_enqueue: Optional[Callable[[QueueJob], Any]] = None,
         options: Optional[Dict[str, Any]] = None,
         loop: Optional[asyncio.AbstractEventLoop] = None,
     ):
@@ -87,6 +102,7 @@ class SerialQueue:
         self.guild_id = guild_id
         self.max_size = opts.get("maxSize", opts.get("max_size", max_size))
         self.on_process_job = opts.get("onProcessJob", opts.get("on_process_job", on_process_job))
+        self.on_enqueue = opts.get("onEnqueue", opts.get("on_enqueue", on_enqueue))
         self.loop = loop or opts.get("loop")
 
         self.pending_queue: List[QueueJob] = []
@@ -142,6 +158,12 @@ class SerialQueue:
 
         self._ensure_processing(loop)
 
+        if callable(self.on_enqueue):
+            try:
+                self.on_enqueue(job)
+            except Exception:
+                pass
+
         return {
             "job_id": job_id,
             "jobId": job_id,
@@ -169,6 +191,7 @@ class SerialQueue:
 
         while self.pending_queue:
             job = self.pending_queue.pop(0)
+            job.cancel_pending_work()
             job.reject(AbortError("Queue stopped by user"))
 
         was_playing = bool(self.current_job and self.current_cancel_event)
@@ -187,6 +210,7 @@ class SerialQueue:
 
         while self.pending_queue:
             job = self.pending_queue.pop(0)
+            job.cancel_pending_work()
             job.reject(AbortError("Queue cleared by user"))
 
         return {

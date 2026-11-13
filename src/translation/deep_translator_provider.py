@@ -81,7 +81,7 @@ class DeepTranslatorProvider:
         timeout: float = 10.0,
         settings_store: Optional[SettingsStore] = None,
         *,
-        min_request_interval_sec: float = 0.25,
+        min_request_interval_sec: float = 0.05,
         cooldown_sec: float = 60.0,
         max_memory_cache: int = 512,
     ):
@@ -260,10 +260,10 @@ class DeepTranslatorProvider:
                     return None, exc
 
             if attempt == 0:
-                delay = 0.25
+                delay = 0.10
                 if deadline is not None:
                     remaining = deadline - time.monotonic()
-                    if remaining <= 0.35:
+                    if remaining <= 0.15:
                         break
                     delay = min(delay, remaining * 0.3)
                 time.sleep(delay)
@@ -349,10 +349,10 @@ class DeepTranslatorProvider:
                         return None, exc
 
                 if attempt == 0:
-                    delay = 0.25
+                    delay = 0.10
                     if deadline is not None:
                         remaining = deadline - time.monotonic()
-                        if remaining <= 0.35:
+                        if remaining <= 0.15:
                             break
                         delay = min(delay, remaining * 0.3)
                     time.sleep(delay)

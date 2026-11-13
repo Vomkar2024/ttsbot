@@ -1,10 +1,12 @@
 """Edge Neural Text-to-Speech (edge-tts) provider for custom high-quality voice packs."""
 
 import asyncio
+import inspect
 import io
 import logging
 import struct
-from typing import Any, Optional
+import time
+from typing import Any, AsyncIterator, Optional
 
 from ..constants import (
     DEFAULT_EDGE_TTS_PITCH,
@@ -175,7 +177,31 @@ class EdgeTTSProvider:
 
     isAvailable = is_available
 
-    async def synthesize(
+    def _create_communicator(
+        self,
+        edge_tts_mod: Any,
+        *,
+        text: str,
+        voice: str,
+        rate: str,
+        pitch: str,
+        timeout_sec: float,
+    ) -> Any:
+        kwargs: dict[str, Any] = {
+            "text": text,
+            "voice": voice,
+            "rate": rate,
+            "pitch": pitch,
+        }
+        try:
+            sig = inspect.signature(edge_tts_mod.Communicate)
+            if "connect_timeout" in sig.parameters:
+                kwargs["connect_timeout"] = max(1, min(4, int(round(timeout_sec))))
+        except (TypeError, ValueError):
+            pass
+        return edge_tts_mod.Communicate(**kwargs)
+
+    async def stream_chunks(
         self,
         text: str,
         options: Optional[dict] = None,
@@ -186,8 +212,8 @@ class EdgeTTSProvider:
         pitch: Optional[int] = None,
         cancel_event: Optional[asyncio.Event] = None,
         signal: Any = None,
-    ) -> bytes:
-        """Synthesizes text to MP3 bytes via edge-tts streaming."""
+    ) -> AsyncIterator[bytes]:
+        """Yields MP3 audio chunks live from edge-tts as they arrive."""
         opts = options or {}
         if language is None:
             language = opts.get("language")
@@ -212,29 +238,41 @@ class EdgeTTSProvider:
         pitch_str = self._resolve_pitch(pitch, opts)
         timeout_sec = float(opts.get("timeout", opts.get("timeoutSec", self.timeout)))
 
-        async def _stream_audio() -> bytes:
-            import edge_tts
+        import edge_tts
 
-            communicator = edge_tts.Communicate(
-                text=text,
-                voice=resolved_voice,
-                rate=rate_str,
-                pitch=pitch_str,
-            )
-            audio_buf = bytearray()
-            async for chunk in communicator.stream():
+        communicator = self._create_communicator(
+            edge_tts,
+            text=text,
+            voice=resolved_voice,
+            rate=rate_str,
+            pitch=pitch_str,
+            timeout_sec=timeout_sec,
+        )
+
+        deadline = time.monotonic() + max(0.1, timeout_sec)
+        stream_iter = communicator.stream().__aiter__()
+        received_any = False
+
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise asyncio.TimeoutError()
+                try:
+                    chunk = await asyncio.wait_for(stream_iter.__anext__(), timeout=remaining)
+                except StopAsyncIteration:
+                    break
+
                 if (sig and getattr(sig, "aborted", False)) or (
                     cancel_event and cancel_event.is_set()
                 ):
                     raise AbortError("Synthesis cancelled during Edge-TTS streaming")
+
                 if isinstance(chunk, dict) and chunk.get("type") == "audio":
                     data = chunk.get("data")
                     if data:
-                        audio_buf.extend(data)
-            return bytes(audio_buf)
-
-        try:
-            audio_bytes = await asyncio.wait_for(_stream_audio(), timeout=timeout_sec)
+                        received_any = True
+                        yield data
         except AbortError:
             raise
         except asyncio.TimeoutError as te:
@@ -246,8 +284,9 @@ class EdgeTTSProvider:
             )
             if cancel_event and cancel_event.is_set():
                 raise AbortError("Synthesis cancelled during timeout") from te
-            if self.allow_mock_fallback:
-                return self._generate_mock_wav(text)
+            if self.allow_mock_fallback and not received_any:
+                yield self._generate_mock_wav(text)
+                return
             raise TimeoutError(
                 f"Edge-TTS request timed out after {timeout_sec:.1f}s (voice={resolved_voice})"
             ) from te
@@ -260,21 +299,55 @@ class EdgeTTSProvider:
                 language,
                 err,
             )
-            if self.allow_mock_fallback:
-                return self._generate_mock_wav(text)
+            if self.allow_mock_fallback and not received_any:
+                yield self._generate_mock_wav(text)
+                return
             raise err
+        finally:
+            aclose = getattr(stream_iter, "aclose", None)
+            if callable(aclose):
+                try:
+                    await aclose()
+                except Exception:
+                    pass
 
         if (sig and getattr(sig, "aborted", False)) or (cancel_event and cancel_event.is_set()):
             raise AbortError("Synthesis cancelled after completion")
 
-        if not audio_bytes:
+        if not received_any:
             if self.allow_mock_fallback:
-                return self._generate_mock_wav(text)
+                yield self._generate_mock_wav(text)
+                return
             raise RuntimeError(
                 f"Edge-TTS produced empty audio stream for voice={resolved_voice}"
             )
 
-        return audio_bytes
+    async def synthesize(
+        self,
+        text: str,
+        options: Optional[dict] = None,
+        *,
+        language: Optional[str] = None,
+        voice: Optional[str] = None,
+        speed: Optional[int] = None,
+        pitch: Optional[int] = None,
+        cancel_event: Optional[asyncio.Event] = None,
+        signal: Any = None,
+    ) -> bytes:
+        """Synthesizes text to MP3 bytes via edge-tts streaming."""
+        audio_buf = bytearray()
+        async for chunk in self.stream_chunks(
+            text,
+            options,
+            language=language,
+            voice=voice,
+            speed=speed,
+            pitch=pitch,
+            cancel_event=cancel_event,
+            signal=signal,
+        ):
+            audio_buf.extend(chunk)
+        return bytes(audio_buf)
 
     def _generate_mock_wav(self, text: str) -> bytes:
         """Minimal mock WAV generator for offline fallback testing."""
